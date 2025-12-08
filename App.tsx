@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { FolderOpen, RefreshCw, Send, CheckCircle, Clock, File as FileIcon, Search, Mail, AlertTriangle } from 'lucide-react';
+import { FolderOpen, RefreshCw, Send, CheckCircle, Clock, File as FileIcon, Search, Mail, AlertTriangle, Copy } from 'lucide-react';
 import { AppState, Recipient, FileEntry } from './types';
 import { CsvUploader } from './components/CsvUploader';
 import { findBestMatch, generateEmailContent } from './services/geminiService';
@@ -150,18 +150,37 @@ const App: React.FC = () => {
   if (appState === AppState.SELECT_FOLDER) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50">
-        <div className="bg-white p-12 rounded-2xl shadow-xl text-center max-w-lg">
+        <div className="bg-white p-12 rounded-2xl shadow-xl text-center max-w-2xl w-full">
           <div className="bg-indigo-50 p-6 rounded-full inline-block mb-6">
             <FolderOpen className="w-16 h-16 text-indigo-600" />
           </div>
           <h2 className="text-3xl font-bold text-gray-900 mb-4">Selecionar Pasta Monitorada</h2>
-          <p className="text-gray-600 mb-8">
-            Escolha a pasta do Windows onde os anexos (PDFs, Docs) serão salvos.
-            O sistema irá monitorar esta pasta automaticamente.
+          <p className="text-gray-600 mb-6">
+            Escolha a pasta onde os anexos (PDFs, Docs) serão salvos.
           </p>
+          
+          <div className="mb-8 p-4 bg-gray-50 border border-gray-200 rounded-lg text-left">
+            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2 block">Caminho Sugerido</label>
+            <div className="flex items-center gap-2 bg-white p-2 rounded border border-gray-200">
+                <code className="text-xs text-gray-600 font-mono break-all flex-1">
+                    C:\Users\bruno.mendes\Petacorp\File Server - Documentos\Governança\Relatórios mensais
+                </code>
+                <button 
+                  onClick={() => navigator.clipboard.writeText('C:\\Users\\bruno.mendes\\Petacorp\\File Server - Documentos\\Governança\\Relatórios mensais')}
+                  className="p-1.5 hover:bg-gray-100 rounded text-gray-500 hover:text-blue-600 transition"
+                  title="Copiar caminho"
+                >
+                    <Copy className="w-4 h-4" />
+                </button>
+            </div>
+            <p className="text-[10px] text-gray-400 mt-2">
+                * Navegue manualmente até este local na janela que se abrirá.
+            </p>
+          </div>
+
           <button 
             onClick={handleSelectFolder}
-            className="px-8 py-4 bg-indigo-600 text-white rounded-xl font-semibold hover:bg-indigo-700 transition shadow-lg hover:shadow-xl flex items-center gap-3 mx-auto"
+            className="px-8 py-4 bg-indigo-600 text-white rounded-xl font-semibold hover:bg-indigo-700 transition shadow-lg hover:shadow-xl flex items-center gap-3 mx-auto w-full justify-center sm:w-auto"
           >
             <FolderOpen className="w-5 h-5" />
             Escolher Pasta
