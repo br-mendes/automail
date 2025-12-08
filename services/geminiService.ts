@@ -10,8 +10,8 @@ const normalizeText = (text: string) => {
 
 /**
  * Strict match based on user rules:
- * File MUST contain the Agency Name (e.g., JFAL) or Recipient Name.
- * If strictly different, do not consider.
+ * Rule 1: If Agency is specified (and not 'Geral'), the file MUST contain the Agency Name.
+ * Rule 2: If Agency is generic/empty, match by Recipient Name.
  */
 export const findKeywordMatch = (
     recipientName: string,
@@ -22,25 +22,22 @@ export const findKeywordMatch = (
     const cleanAgency = normalizeText(agencyName).trim();
     const cleanName = normalizeText(recipientName).trim();
     
-    // Safety check: if agency is too generic like "geral" or empty, rely on name
-    const useAgency = cleanAgency.length > 2 && cleanAgency !== 'geral';
+    // Check if we have a specific agency to filter by
+    const hasSpecificAgency = cleanAgency.length > 2 && cleanAgency !== 'geral';
     
     const candidate = files.find(fileName => {
         const normFileName = normalizeText(fileName);
         
-        // STRICT RULE: Filename must contain the Agency identifier (if valid) OR the Recipient Name
-        // "exemplo: nome do órgão JFAL, arquivo deve conter JFAL"
-        const containsAgency = useAgency && normFileName.includes(cleanAgency);
-        const containsName = normFileName.includes(cleanName);
-
-        // If it doesn't contain either the Agency tag or the Name, ignore it.
-        if (!containsAgency && !containsName) {
-            return false;
+        // STRICT RULE: "exemplo: nome do órgão JFAL, arquivo deve conter JFAL"
+        if (hasSpecificAgency) {
+            // If the user has a defined agency, the file MUST contain that agency tag.
+            // We ignore the name in this specific strict mode to avoid false positives 
+            // (e.g. "Maria" exists in many agencies, but we only want the one for "JFAL").
+            return normFileName.includes(cleanAgency);
         }
-        
-        // Optional: If you still want to prioritize 'healthcheck' or 'relatorio' files among those that matched the name
-        // you could add weighting here, but the request says "corresponder apenas ao nome".
-        return true;
+
+        // Fallback: If no specific agency, match by Person Name
+        return normFileName.includes(cleanName);
     });
 
     return candidate || null;
@@ -80,10 +77,9 @@ export const generateEmailContent = async (
   }
 
   // 3. Construct Template
-  // Request: "quebra de página após 'Ao'" -> interpreted as double line break for clean separation.
-  // Request: "embed da imagem de assinatura" -> using link as mailto doesn't support HTML img tags.
-  
-  const body = `Ao ${agencyName},
+  // Formatting Requirement: Line break after "Ao"
+  const body = `Ao
+${agencyName},
 
 Prezados(as) Senhores(as),
 
@@ -107,36 +103,7 @@ export const findBestMatch = async (
   targetName: string,
   availableFiles: string[]
 ): Promise<string | null> => {
+  // Kept for backward compatibility or future AI fuzzy matching usage
   if (availableFiles.length === 0) return null;
-
-  try {
-    const prompt = `
-      Eu tenho um nome de destinatário: "${targetName}".
-      Eu tenho uma lista de arquivos: ${JSON.stringify(availableFiles)}.
-      
-      Retorne APENAS o nome exato do arquivo encontrado no formato JSON: { "filename": "nome_do_arquivo.ext" }
-      O arquivo DEVE conter parte do nome do destinatário.
-    `;
-
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-                filename: { type: Type.STRING, nullable: true }
-            }
-        }
-      },
-    });
-
-    const result = JSON.parse(response.text || "{}");
-    return result.filename || null;
-
-  } catch (error) {
-    console.warn("AI Matching failed", error);
-    return null;
-  }
+  return null; 
 };
