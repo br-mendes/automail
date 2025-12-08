@@ -9,29 +9,38 @@ const normalizeText = (text: string) => {
 };
 
 /**
- * Deterministic match based on user rules:
- * File must contain (Healthcheck OR Relatório) AND (Recipient Name)
+ * Strict match based on user rules:
+ * File MUST contain the Agency Name (e.g., JFAL) or Recipient Name.
+ * If strictly different, do not consider.
  */
 export const findKeywordMatch = (
     recipientName: string,
+    agencyName: string,
     files: string[]
 ): string | null => {
-    const normalizedTarget = normalizeText(recipientName).replace(/\s+/g, ''); // e.g. "ministeriodasaude"
+    // 1. Prepare search terms
+    const cleanAgency = normalizeText(agencyName).trim();
+    const cleanName = normalizeText(recipientName).trim();
     
-    // Filter files that match the keywords first
-    const keywords = ['healthcheck', 'relatorio', 'relatório'];
+    // Safety check: if agency is too generic like "geral" or empty, rely on name
+    const useAgency = cleanAgency.length > 2 && cleanAgency !== 'geral';
     
     const candidate = files.find(fileName => {
         const normFileName = normalizeText(fileName);
         
-        // 1. Must contain at least one keyword
-        const hasKeyword = keywords.some(k => normFileName.includes(k));
-        if (!hasKeyword) return false;
+        // STRICT RULE: Filename must contain the Agency identifier (if valid) OR the Recipient Name
+        // "exemplo: nome do órgão JFAL, arquivo deve conter JFAL"
+        const containsAgency = useAgency && normFileName.includes(cleanAgency);
+        const containsName = normFileName.includes(cleanName);
 
-        // 2. Must contain the recipient name (simple substring check after stripping spaces)
-        // We strip spaces from filename too to match "Ministerio Da Saude" with "MinisterioDaSaude"
-        const normFileNameClean = normFileName.replace(/[^a-z0-9]/g, '');
-        return normFileNameClean.includes(normalizedTarget);
+        // If it doesn't contain either the Agency tag or the Name, ignore it.
+        if (!containsAgency && !containsName) {
+            return false;
+        }
+        
+        // Optional: If you still want to prioritize 'healthcheck' or 'relatorio' files among those that matched the name
+        // you could add weighting here, but the request says "corresponder apenas ao nome".
+        return true;
     });
 
     return candidate || null;
@@ -47,17 +56,15 @@ export const generateEmailContent = async (
   const monthName = date.toLocaleString('pt-BR', { month: 'long' });
   const year = date.getFullYear();
 
-  // 2. Identify Report Type (Healthcheck vs Chamados)
-  let reportType = "Healthcheck ou Chamados"; // Fallback
+  // 2. Identify Report Type
+  let reportType = "Healthcheck ou Chamados"; 
   const lowerName = fileName.toLowerCase();
 
-  // Heuristic check
   if (lowerName.includes('health') || lowerName.includes('hc') || lowerName.includes('check')) {
     reportType = "Healthcheck";
   } else if (lowerName.includes('chamado') || lowerName.includes('ticket') || lowerName.includes('atendimento')) {
     reportType = "Chamados";
   } else {
-    // AI Fallback for ambiguous names
     try {
       const classification = await ai.models.generateContent({
         model: "gemini-2.5-flash",
@@ -72,8 +79,10 @@ export const generateEmailContent = async (
     }
   }
 
-  // 3. Construct Strict Template with Line Breaks (\n)
-  // Note: We use \n. When passed to encodeURIComponent for mailto, it becomes %0A.
+  // 3. Construct Template
+  // Request: "quebra de página após 'Ao'" -> interpreted as double line break for clean separation.
+  // Request: "embed da imagem de assinatura" -> using link as mailto doesn't support HTML img tags.
+  
   const body = `Ao ${agencyName},
 
 Prezados(as) Senhores(as),
@@ -88,7 +97,6 @@ https://1drv.ms/i/c/9001c56eb955c86d/IQR6eojwjvGgSYkp266gHvyqAawCgXODNSK6ct0fNeb
 
   const subject = `Relatório de ${reportType} - ${agencyName} - ${monthName}/${year}`;
 
-  // Return immediate result
   return Promise.resolve({
     subject,
     body
@@ -106,13 +114,8 @@ export const findBestMatch = async (
       Eu tenho um nome de destinatário: "${targetName}".
       Eu tenho uma lista de arquivos: ${JSON.stringify(availableFiles)}.
       
-      Qual arquivo desta lista é o mais provável de pertencer a este destinatário?
-      A correspondência pode ser parcial (ex: "João Silva" combina com "relatorio_joao_silva_2024.pdf" ou "Ministério da Saúde" combina com "healthcheck_min_saude.xlsx").
-      
-      Priorize arquivos que contenham palavras como "Relatório" ou "Healthcheck".
-
       Retorne APENAS o nome exato do arquivo encontrado no formato JSON: { "filename": "nome_do_arquivo.ext" }
-      Se nenhum arquivo parecer correto, retorne null no valor.
+      O arquivo DEVE conter parte do nome do destinatário.
     `;
 
     const response = await ai.models.generateContent({
@@ -133,9 +136,7 @@ export const findBestMatch = async (
     return result.filename || null;
 
   } catch (error) {
-    console.warn("AI Matching failed, falling back to basic includes check", error);
-    // Fallback: simple case-insensitive substring match
-    const normalizedTarget = normalizeText(targetName).replace(/\s+/g, '');
-    return availableFiles.find(f => normalizeText(f).replace(/[^a-z0-9]/g, '').includes(normalizedTarget)) || null;
+    console.warn("AI Matching failed", error);
+    return null;
   }
 };

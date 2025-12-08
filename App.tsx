@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { FolderOpen, RefreshCw, Send, CheckCircle, Clock, File as FileIcon, Search, Mail, AlertTriangle, Copy, RotateCcw } from 'lucide-react';
+import { FolderOpen, RefreshCw, Send, CheckCircle, Clock, File as FileIcon, Search, Mail, AlertTriangle, Copy, RotateCcw, Zap } from 'lucide-react';
 import { AppState, Recipient, FileEntry } from './types';
 import { CsvUploader } from './components/CsvUploader';
 import { findBestMatch, generateEmailContent, findKeywordMatch } from './services/geminiService';
@@ -70,35 +70,28 @@ const App: React.FC = () => {
             continue;
         }
 
-        // --- NEW LOGIC START ---
+        // --- UPDATED STRICT LOGIC ---
+        // Pass both Name and Agency to the strict matcher
+        const strictMatch = findKeywordMatch(r.name, r.agency, fileNames);
         
-        // 1. Priority: specific keywords + name match
-        // Rule: Must contain ("healthcheck" OR "relatório") AND (Recipient Name)
-        const keywordMatch = findKeywordMatch(r.name, fileNames);
-        
-        if (keywordMatch) {
-            updatedRecipients[i] = { ...r, status: 'file_found', matchedFileName: keywordMatch };
+        if (strictMatch) {
+            updatedRecipients[i] = { ...r, status: 'file_found', matchedFileName: strictMatch };
             hasChanges = true;
-            continue; // Found high quality match, skip others
+            continue;
         }
 
-        // 2. Secondary: Exact/Simple Name substring match (without requiring keywords)
-        // Useful if the file is just named "Ministério da Saúde.pdf"
-        const normalizedName = r.name.toLowerCase().replace(/\s/g, '');
-        const exactMatch = files.find(f => f.name.toLowerCase().replace(/[^a-z0-9]/g, '').includes(normalizedName));
-
-        if (exactMatch) {
-            updatedRecipients[i] = { ...r, status: 'file_found', matchedFileName: exactMatch.name };
+        // If no strict match found, we leave it as pending (as requested: "se for diferente não considerar")
+        // We removed the fallback to generic "names only" if the agency was provided but not found.
+        // However, if Agency was empty/unknown, findKeywordMatch handles it by checking name only.
+        
+        // AI Fallback (Optional - only if strict logic is too strict, but keeping it for edge cases)
+        /* 
+        const aiMatchName = await findBestMatch(r.name, fileNames);
+        if (aiMatchName) {
+            updatedRecipients[i] = { ...r, status: 'file_found', matchedFileName: aiMatchName };
             hasChanges = true;
-        } else {
-            // 3. AI Fuzzy Match (Last resort)
-            // Limit AI calls to avoid rate limits in this loop - purely for demo logic
-            const aiMatchName = await findBestMatch(r.name, fileNames);
-            if (aiMatchName) {
-                updatedRecipients[i] = { ...r, status: 'file_found', matchedFileName: aiMatchName };
-                hasChanges = true;
-            }
         }
+        */
       }
 
       if (hasChanges) {
@@ -145,11 +138,25 @@ const App: React.FC = () => {
 
     const subject = encodeURIComponent(recipient.emailSubject);
     const body = encodeURIComponent(recipient.emailBody);
+    const cc = "suporte-gerencial@petacorp.com.br,financeiro@petacorp.com.br";
     
-    window.open(`mailto:${recipient.email}?subject=${subject}&body=${body}`, '_blank');
+    window.open(`mailto:${recipient.email}?cc=${cc}&subject=${subject}&body=${body}`, '_blank');
     
     // Update status to sent locally
     setRecipients(prev => prev.map(r => r.id === recipient.id ? { ...r, status: 'sent' } : r));
+  };
+
+  // Helper: Send All Ready
+  const handleSendAll = () => {
+    const readyRecipients = recipients.filter(r => r.status === 'ready');
+    if (readyRecipients.length === 0) return;
+
+    const confirmed = window.confirm(`Isso tentará abrir ${readyRecipients.length} janelas de e-mail. Seu navegador pode bloquear pop-ups. Deseja continuar?`);
+    if (!confirmed) return;
+
+    readyRecipients.forEach(r => {
+        handleSend(r);
+    });
   };
 
   // Helper: Reset Status
@@ -258,7 +265,7 @@ const App: React.FC = () => {
         </div>
 
         {/* Stats Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
             <div className="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
                 <div className="text-gray-500 text-sm font-medium mb-1">Pendentes</div>
                 <div className="text-3xl font-bold text-gray-900">
@@ -276,6 +283,19 @@ const App: React.FC = () => {
                 <div className="text-3xl font-bold text-green-600">
                     {recipients.filter(r => r.status === 'sent').length}
                 </div>
+            </div>
+            
+            {/* Action Card */}
+            <div className="bg-indigo-50 p-6 rounded-xl border border-indigo-100 shadow-sm flex flex-col justify-center items-center">
+                <button
+                    onClick={handleSendAll}
+                    disabled={recipients.filter(r => r.status === 'ready').length === 0}
+                    className="w-full py-2 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 transition flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed shadow"
+                >
+                    <Zap className="w-4 h-4" />
+                    Enviar Todos ({recipients.filter(r => r.status === 'ready').length})
+                </button>
+                <span className="text-[10px] text-indigo-400 mt-2 text-center">Requer permissão de pop-ups</span>
             </div>
         </div>
 
