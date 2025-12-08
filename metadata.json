@@ -1,0 +1,5 @@
+{
+  "name": "Copy of AutoMail Dispatcher AI",
+  "description": "An intelligent dashboard that monitors a local folder, matches files to a recipient spreadsheet, and uses Gemini to generate professional email drafts automatically.",
+  "requestFramePermissions": []
+}
