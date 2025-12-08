@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { FolderOpen, RefreshCw, Send, CheckCircle, Clock, File as FileIcon, Search, Mail, AlertTriangle, Copy } from 'lucide-react';
+import { FolderOpen, RefreshCw, Send, CheckCircle, Clock, File as FileIcon, Search, Mail, AlertTriangle, Copy, RotateCcw } from 'lucide-react';
 import { AppState, Recipient, FileEntry } from './types';
 import { CsvUploader } from './components/CsvUploader';
-import { findBestMatch, generateEmailContent } from './services/geminiService';
+import { findBestMatch, generateEmailContent, findKeywordMatch } from './services/geminiService';
 
 const App: React.FC = () => {
   const [appState, setAppState] = useState<AppState>(AppState.UPLOAD_CSV);
@@ -70,8 +70,20 @@ const App: React.FC = () => {
             continue;
         }
 
-        // 1. Exact Match Attempt (e.g. "JohnDoe.pdf" contains "John Doe")
-        // Basic normalization for exact check
+        // --- NEW LOGIC START ---
+        
+        // 1. Priority: specific keywords + name match
+        // Rule: Must contain ("healthcheck" OR "relatório") AND (Recipient Name)
+        const keywordMatch = findKeywordMatch(r.name, fileNames);
+        
+        if (keywordMatch) {
+            updatedRecipients[i] = { ...r, status: 'file_found', matchedFileName: keywordMatch };
+            hasChanges = true;
+            continue; // Found high quality match, skip others
+        }
+
+        // 2. Secondary: Exact/Simple Name substring match (without requiring keywords)
+        // Useful if the file is just named "Ministério da Saúde.pdf"
         const normalizedName = r.name.toLowerCase().replace(/\s/g, '');
         const exactMatch = files.find(f => f.name.toLowerCase().replace(/[^a-z0-9]/g, '').includes(normalizedName));
 
@@ -79,9 +91,8 @@ const App: React.FC = () => {
             updatedRecipients[i] = { ...r, status: 'file_found', matchedFileName: exactMatch.name };
             hasChanges = true;
         } else {
-            // 2. AI Fuzzy Match (Only if exact match fails and we haven't tried recently)
+            // 3. AI Fuzzy Match (Last resort)
             // Limit AI calls to avoid rate limits in this loop - purely for demo logic
-            // In a real app, you might debounce this or trigger it manually
             const aiMatchName = await findBestMatch(r.name, fileNames);
             if (aiMatchName) {
                 updatedRecipients[i] = { ...r, status: 'file_found', matchedFileName: aiMatchName };
@@ -97,7 +108,7 @@ const App: React.FC = () => {
 
     processMatches();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [files]); // We depend on files updating. We avoid adding recipients to deps to avoid loops, only re-run if files list changes.
+  }, [files]); 
 
   // 5. Generate Email Content (Triggered when a file is found but content not generated)
   useEffect(() => {
@@ -135,11 +146,24 @@ const App: React.FC = () => {
     const subject = encodeURIComponent(recipient.emailSubject);
     const body = encodeURIComponent(recipient.emailBody);
     
-    // Note: mailto does not support attachments programmatically due to browser security.
     window.open(`mailto:${recipient.email}?subject=${subject}&body=${body}`, '_blank');
     
     // Update status to sent locally
     setRecipients(prev => prev.map(r => r.id === recipient.id ? { ...r, status: 'sent' } : r));
+  };
+
+  // Helper: Reset Status
+  const handleResetStatus = (recipient: Recipient) => {
+    setRecipients(prev => prev.map(r => {
+        if (r.id !== recipient.id) return r;
+        
+        // If file still exists, go to ready, otherwise pending
+        const fileExists = files.some(f => f.name === r.matchedFileName);
+        return {
+            ...r,
+            status: fileExists ? 'ready' : 'pending'
+        };
+    }));
   };
 
   // Render Functions
@@ -228,8 +252,8 @@ const App: React.FC = () => {
         <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-8 flex items-start gap-3">
             <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
             <div className="text-sm text-amber-800">
-                <strong>Atenção:</strong> Devido à segurança do navegador, anexos não podem ser adicionados automaticamente ao cliente de e-mail. 
-                O sistema irá gerar o texto, mas você deve arrastar o arquivo identificado para a janela do e-mail antes de enviar.
+                <strong>Atenção:</strong> Devido à segurança do navegador, anexos não podem ser adicionados automaticamente.
+                Arraste o arquivo identificado para a janela do e-mail antes de enviar.
             </div>
         </div>
 
@@ -317,9 +341,21 @@ const App: React.FC = () => {
                                             Enviar E-mail
                                         </button>
                                     ) : recipient.status === 'sent' ? (
-                                        <button disabled className="inline-flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-400 text-sm font-medium rounded-lg cursor-not-allowed">
-                                            Concluído
-                                        </button>
+                                        <div className="flex items-center justify-end gap-2">
+                                            <button 
+                                                disabled 
+                                                className="inline-flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-400 text-sm font-medium rounded-lg cursor-not-allowed"
+                                            >
+                                                Concluído
+                                            </button>
+                                            <button
+                                                onClick={() => handleResetStatus(recipient)}
+                                                className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition"
+                                                title="Desfazer envio"
+                                            >
+                                                <RotateCcw className="w-4 h-4" />
+                                            </button>
+                                        </div>
                                     ) : (
                                         <button disabled className="inline-flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-300 text-sm font-medium rounded-lg cursor-not-allowed">
                                             Aguardando

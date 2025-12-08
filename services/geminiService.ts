@@ -3,6 +3,40 @@ import { EmailGenerationResponse } from "../types";
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
+// Helper to remove accents and special characters for comparison
+const normalizeText = (text: string) => {
+  return text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+};
+
+/**
+ * Deterministic match based on user rules:
+ * File must contain (Healthcheck OR Relatório) AND (Recipient Name)
+ */
+export const findKeywordMatch = (
+    recipientName: string,
+    files: string[]
+): string | null => {
+    const normalizedTarget = normalizeText(recipientName).replace(/\s+/g, ''); // e.g. "ministeriodasaude"
+    
+    // Filter files that match the keywords first
+    const keywords = ['healthcheck', 'relatorio', 'relatório'];
+    
+    const candidate = files.find(fileName => {
+        const normFileName = normalizeText(fileName);
+        
+        // 1. Must contain at least one keyword
+        const hasKeyword = keywords.some(k => normFileName.includes(k));
+        if (!hasKeyword) return false;
+
+        // 2. Must contain the recipient name (simple substring check after stripping spaces)
+        // We strip spaces from filename too to match "Ministerio Da Saude" with "MinisterioDaSaude"
+        const normFileNameClean = normFileName.replace(/[^a-z0-9]/g, '');
+        return normFileNameClean.includes(normalizedTarget);
+    });
+
+    return candidate || null;
+};
+
 export const generateEmailContent = async (
   recipientName: string,
   agencyName: string,
@@ -38,7 +72,8 @@ export const generateEmailContent = async (
     }
   }
 
-  // 3. Construct Strict Template
+  // 3. Construct Strict Template with Line Breaks (\n)
+  // Note: We use \n. When passed to encodeURIComponent for mailto, it becomes %0A.
   const body = `Ao ${agencyName},
 
 Prezados(as) Senhores(as),
@@ -47,11 +82,13 @@ Encaminhamos, em anexo, o relatório de ${reportType} referente ao mês de ${mon
 
 Colocamo-nos à disposição para quaisquer esclarecimentos que se fizerem necessários.
 
-Atenciosamente,`;
+Atenciosamente,
+
+https://1drv.ms/i/c/9001c56eb955c86d/IQR6eojwjvGgSYkp266gHvyqAawCgXODNSK6ct0fNeb6GVQ`;
 
   const subject = `Relatório de ${reportType} - ${agencyName} - ${monthName}/${year}`;
 
-  // Return immediate result (no AI generation needed for the body text itself since it's a strict template)
+  // Return immediate result
   return Promise.resolve({
     subject,
     body
@@ -72,6 +109,8 @@ export const findBestMatch = async (
       Qual arquivo desta lista é o mais provável de pertencer a este destinatário?
       A correspondência pode ser parcial (ex: "João Silva" combina com "relatorio_joao_silva_2024.pdf" ou "Ministério da Saúde" combina com "healthcheck_min_saude.xlsx").
       
+      Priorize arquivos que contenham palavras como "Relatório" ou "Healthcheck".
+
       Retorne APENAS o nome exato do arquivo encontrado no formato JSON: { "filename": "nome_do_arquivo.ext" }
       Se nenhum arquivo parecer correto, retorne null no valor.
     `;
@@ -96,7 +135,7 @@ export const findBestMatch = async (
   } catch (error) {
     console.warn("AI Matching failed, falling back to basic includes check", error);
     // Fallback: simple case-insensitive substring match
-    const normalizedTarget = targetName.toLowerCase().replace(/\s+/g, '');
-    return availableFiles.find(f => f.toLowerCase().replace(/[^a-z0-9]/g, '').includes(normalizedTarget)) || null;
+    const normalizedTarget = normalizeText(targetName).replace(/\s+/g, '');
+    return availableFiles.find(f => normalizeText(f).replace(/[^a-z0-9]/g, '').includes(normalizedTarget)) || null;
   }
 };
