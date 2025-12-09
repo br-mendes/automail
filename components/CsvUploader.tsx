@@ -60,7 +60,7 @@ export const CsvUploader: React.FC<CsvUploaderProps> = ({ onDataLoaded }) => {
     <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4">
       <div className="flex flex-col items-center justify-center p-12 bg-white rounded-2xl shadow-xl border border-gray-100 max-w-lg w-full">
         <img 
-          src="https://1drv.ms/i/c/9001c56eb955c86d/IQR6eojwjvGgSYkp266gHvyqAawCgXODNSK6ct0fNeb6GVQ" 
+          src="https://i.ibb.co/1Y4dQvpD/2-small.png" 
           alt="Petacorp Logo" 
           className="h-12 mb-6 object-contain"
         />

@@ -9,14 +9,16 @@ export interface Client {
 export interface Recipient extends Client {
   status: 'pending' | 'file_found' | 'ready' | 'sent';
   matchedFileName?: string;
+  matchedTime?: Date; // Timestamp when the file was identified
   emailSubject?: string;
-  emailBody?: string;
+  emailBody?: string; // Plain text for mailto
+  emailBodyHtml?: string; // HTML structure with signature embed
   agency: string; // Kept for compatibility, maps to sigla or name depending on usage
 }
 
 export interface FileEntry {
   name: string;
-  handle: FileSystemFileHandle;
+  handle: FileSystemFileHandle | File; // Support standard File object for fallback
 }
 
 export enum AppState {
@@ -29,6 +31,7 @@ export enum AppState {
 export interface EmailGenerationResponse {
   subject: string;
   body: string;
+  bodyHtml: string;
 }
 
 export type AutoScanMode = 'disabled' | 'interval' | 'fixed';
@@ -37,3 +40,13 @@ export interface AutoScanConfig {
   mode: AutoScanMode;
   intervalMinutes: number; // Used if mode is 'interval'
 }
+
+export interface SentLog {
+  id: string;
+  timestamp: Date;
+  recipientSigla: string;
+  recipientEmail: string;
+  subject: string;
+}
+
+export type DashboardTab = 'all' | 'pending' | 'ready' | 'sent' | 'history';

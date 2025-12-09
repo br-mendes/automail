@@ -1,11 +1,11 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { FolderOpen, RefreshCw, Send, CheckCircle, Clock, File as FileIcon, Search, AlertTriangle, RotateCcw, Zap, Settings, X, CalendarClock, Timer, Users, Mail, ArrowLeft, LayoutDashboard, History, ChevronRight } from 'lucide-react';
-import { AppState, Client, Recipient, FileEntry, AutoScanConfig } from './types';
+import { FolderOpen, RefreshCw, Send, CheckCircle, Clock, File as FileIcon, Search, AlertTriangle, RotateCcw, Zap, Settings, X, CalendarClock, Timer, Users, Mail, ArrowLeft, LayoutDashboard, History, ChevronRight, Filter, MonitorPlay, Trash2 } from 'lucide-react';
+import { AppState, Client, Recipient, FileEntry, AutoScanConfig, SentLog, DashboardTab } from './types';
 import { ClientManager } from './components/ClientManager';
 import { generateEmailContent, findKeywordMatch } from './services/geminiService';
 
-const LOGO_URL = "https://1drv.ms/i/c/9001c56eb955c86d/IQR6eojwjvGgSYkp266gHvyqAawCgXODNSK6ct0fNeb6GVQ";
+const LOGO_URL = "https://i.ibb.co/1Y4dQvpD/2-small.png";
 
 const App: React.FC = () => {
   const [appState, setAppState] = useState<AppState>(AppState.HOME);
@@ -13,11 +13,13 @@ const App: React.FC = () => {
   // Data
   const [clients, setClients] = useState<Client[]>([]);
   const [recipients, setRecipients] = useState<Recipient[]>([]);
+  const [sentHistory, setSentHistory] = useState<SentLog[]>([]);
   
   // Settings
-  const [globalCC, setGlobalCC] = useState<string>("suporte-gerencial@petacorp.com.br,financeiro@petacorp.com.br");
+  const [globalCC, setGlobalCC] = useState<string>("suporte-gerencial@petacorp.com.br; financeiro@petacorp.com.br");
   const [scanConfig, setScanConfig] = useState<AutoScanConfig>({ mode: 'disabled', intervalMinutes: 30 });
   const [showSettings, setShowSettings] = useState(false);
+  const [activeTab, setActiveTab] = useState<DashboardTab>('all');
 
   // File System
   const [dirHandle, setDirHandle] = useState<FileSystemDirectoryHandle | null>(null);
@@ -27,15 +29,39 @@ const App: React.FC = () => {
   const [lastScanTime, setLastScanTime] = useState<Date | null>(null);
   
   const lastAutoScanRef = useRef<number>(0);
+  // Fallback file input ref
+  const fallbackFileInputRef = useRef<HTMLInputElement>(null);
+
+  // Helper to normalize clients by merging same Sigla
+  const normalizeAndMergeClients = (clientList: Client[]): Client[] => {
+      const map = new Map<string, Client>();
+      clientList.forEach(c => {
+          const key = c.sigla.toLowerCase().trim();
+          const existing = map.get(key);
+          if (existing) {
+              const existingEmails = existing.email.split(/[,;]+/).map(e => e.trim());
+              const newEmails = c.email.split(/[,;]+/).map(e => e.trim());
+              const uniqueEmails = Array.from(new Set([...existingEmails, ...newEmails])).filter(Boolean).join('; '); // Use ; for Outlook
+              map.set(key, { ...existing, email: uniqueEmails });
+          } else {
+              map.set(key, { ...c, email: c.email.replace(/,/g, ';') });
+          }
+      });
+      return Array.from(map.values());
+  };
 
   // 1. Initialize from LocalStorage
   useEffect(() => {
     const savedClients = localStorage.getItem('petacorp_clients');
     const savedCC = localStorage.getItem('petacorp_cc');
+    const savedHistory = localStorage.getItem('petacorp_history');
+    const savedScanConfig = localStorage.getItem('petacorp_scan_config');
     
     if (savedClients) {
       try {
-        setClients(JSON.parse(savedClients));
+        const parsed = JSON.parse(savedClients);
+        // Ensure data consistency on load
+        setClients(normalizeAndMergeClients(parsed));
       } catch (e) {
         console.error("Failed to parse saved clients");
       }
@@ -43,6 +69,20 @@ const App: React.FC = () => {
 
     if (savedCC) {
       setGlobalCC(savedCC);
+    }
+
+    if (savedScanConfig) {
+        try {
+            setScanConfig(JSON.parse(savedScanConfig));
+        } catch(e) {}
+    }
+    
+    if (savedHistory) {
+        try {
+            const parsed = JSON.parse(savedHistory);
+            // Rehydrate dates
+            setSentHistory(parsed.map((l: any) => ({ ...l, timestamp: new Date(l.timestamp) })));
+        } catch(e) {}
     }
   }, []);
 
@@ -54,29 +94,35 @@ const App: React.FC = () => {
   useEffect(() => {
     localStorage.setItem('petacorp_cc', globalCC);
   }, [globalCC]);
-
-  // 3. Map Clients to Runtime Recipients when clients or folder ready
+  
   useEffect(() => {
-    // Only map if we don't have active state or if forced update needed
-    // Simple strategy: Re-map on client change, preserving status if possible?
-    // For simplicity: When clients change, we rebuild the recipient list.
-    
+    localStorage.setItem('petacorp_scan_config', JSON.stringify(scanConfig));
+  }, [scanConfig]);
+
+  useEffect(() => {
+    localStorage.setItem('petacorp_history', JSON.stringify(sentHistory));
+  }, [sentHistory]);
+
+  // 3. Map Clients to Runtime Recipients
+  useEffect(() => {
     setRecipients(prev => {
         return clients.map(client => {
             const existing = prev.find(p => p.id === client.id);
             return {
                 ...client,
-                agency: client.sigla, // Logic compatibility
+                agency: client.sigla, 
                 status: existing ? existing.status : 'pending',
                 matchedFileName: existing ? existing.matchedFileName : undefined,
+                matchedTime: existing ? existing.matchedTime : undefined,
                 emailSubject: existing ? existing.emailSubject : undefined,
                 emailBody: existing ? existing.emailBody : undefined,
+                emailBodyHtml: existing ? existing.emailBodyHtml : undefined,
             };
         });
     });
   }, [clients]);
 
-  // 5. Scan Logic (Defined before handleSelectFolder to be used inside it if needed, or via effect)
+  // 5. Scan Logic 
   const scanDirectory = useCallback(async (handle: FileSystemDirectoryHandle) => {
     setIsScanning(true);
     const newFiles: FileEntry[] = [];
@@ -92,20 +138,32 @@ const App: React.FC = () => {
       setLastScanTime(new Date());
     } catch (e) {
       console.error("Error scanning directory", e);
-      alert("Erro ao ler a pasta. Pode ser necessário selecioná-la novamente para renovar a permissão.");
+      alert("Erro ao ler a pasta. Permissão expirada ou acesso negado.");
     } finally {
       setIsScanning(false);
     }
   }, []);
+  
+  // Fallback Scan for File Input (Compatibility Mode)
+  const handleFallbackFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+      if (event.target.files) {
+          const fileList = Array.from(event.target.files);
+          const newFiles: FileEntry[] = fileList.map(f => ({ name: f.name, handle: f }));
+          setFiles(newFiles);
+          setLastScanTime(new Date());
+          
+          // Fake a handle name
+          setDirHandle({ name: "Pasta Selecionada (Modo Compatibilidade)" } as any);
+          setAppState(AppState.DASHBOARD);
+      }
+  };
 
   // 4. Handle Folder Selection
   const handleSelectFolder = async () => {
     try {
       const handle = await (window as any).showDirectoryPicker();
       
-      // Update History
       setFolderHistory(prev => {
-        // Avoid duplicates by name (simple check)
         if (prev.some(h => h.name === handle.name)) return prev;
         return [...prev, handle];
       });
@@ -113,8 +171,11 @@ const App: React.FC = () => {
       setDirHandle(handle);
       setAppState(AppState.DASHBOARD);
       await scanDirectory(handle);
-    } catch (err) {
+    } catch (err: any) {
       console.error("Folder access denied or cancelled", err);
+      if (err.name === 'SecurityError' || err.message.includes('Cross origin')) {
+          alert("Seu navegador ou ambiente bloqueou o acesso direto à pasta. Por favor, utilize o botão 'Modo Compatibilidade' abaixo.");
+      }
     }
   };
 
@@ -124,16 +185,45 @@ const App: React.FC = () => {
       await scanDirectory(handle);
   };
 
+  // 6. Auto-Scan Heartbeat & Calculations
+  const getNextScanTime = () => {
+    if (scanConfig.mode === 'disabled') return null;
+    const now = new Date();
+    
+    if (scanConfig.mode === 'interval') {
+       if (!lastScanTime) return null;
+       return new Date(lastScanTime.getTime() + scanConfig.intervalMinutes * 60000);
+    }
 
-  // 6. Auto-Scan Heartbeat
+    if (scanConfig.mode === 'fixed') {
+        const targets = [8, 12, 16];
+        const currentHour = now.getHours();
+        const currentMinute = now.getMinutes();
+        
+        // Find next hour target
+        let nextHour = targets.find(t => t > currentHour || (t === currentHour && currentMinute === 0));
+        let nextDate = new Date(now);
+
+        if (!nextHour) {
+            // Next day 8am
+            nextHour = 8;
+            nextDate.setDate(nextDate.getDate() + 1);
+        }
+        nextDate.setHours(nextHour, 0, 0, 0);
+        return nextDate;
+    }
+    return null;
+  };
+
   useEffect(() => {
-    if (!dirHandle || scanConfig.mode === 'disabled') return;
+    if (!dirHandle || scanConfig.mode === 'disabled' || !dirHandle.values) return; // Disable auto-scan for fallback mode
 
     const checkAutoScan = () => {
       if (isScanning) return;
       const now = new Date();
       const currentTimestamp = now.getTime();
       
+      // Prevent rapid firing (at least 1 min between scans)
       if (currentTimestamp - lastAutoScanRef.current < 60000) return;
 
       let shouldScan = false;
@@ -147,10 +237,16 @@ const App: React.FC = () => {
       } else if (scanConfig.mode === 'fixed') {
         const hour = now.getHours();
         const minute = now.getMinutes();
+        // Fixed times: 08:00, 12:00, 16:00
+        // Window of 5 minutes
         const targetHours = [8, 12, 16];
         
-        if (targetHours.includes(hour) && minute === 0) {
-          shouldScan = true;
+        if (targetHours.includes(hour) && minute >= 0 && minute < 5) {
+          const lastRunDate = lastScanTime ? new Date(lastScanTime) : new Date(0);
+          // Check if ran this hour today
+          if (lastRunDate.getHours() !== hour || lastRunDate.getDate() !== now.getDate()) {
+              shouldScan = true;
+          }
         }
       }
 
@@ -160,7 +256,7 @@ const App: React.FC = () => {
       }
     };
 
-    const intervalId = setInterval(checkAutoScan, 10000);
+    const intervalId = setInterval(checkAutoScan, 10000); // Check every 10s
     return () => clearInterval(intervalId);
   }, [dirHandle, scanConfig, lastScanTime, isScanning, scanDirectory]);
 
@@ -181,12 +277,15 @@ const App: React.FC = () => {
             continue;
         }
 
-        // STRICT MATCH: Use Client.sigla (mapped to agency) for strict file matching (e.g. JFAL)
-        // Use Client.name as fallback if sigla not present? No, specific strictness requested.
         const strictMatch = findKeywordMatch(r.name, r.sigla, fileNames);
         
         if (strictMatch) {
-            updatedRecipients[i] = { ...r, status: 'file_found', matchedFileName: strictMatch };
+            updatedRecipients[i] = { 
+                ...r, 
+                status: 'file_found', 
+                matchedFileName: strictMatch,
+                matchedTime: new Date() // Set found time
+            };
             hasChanges = true;
             continue;
         }
@@ -214,12 +313,13 @@ const App: React.FC = () => {
         const index = updatedRecipients.findIndex(r => r.id === target.id);
         if (index === -1) return;
 
-        // Use Client Name (Full Name) for the Email Body greeting "Ao [Name]"
+        // Use 'target.name' (Full Name) as Agency Name for email formatting
         const content = await generateEmailContent(target.name, target.name, target.matchedFileName!);
         updatedRecipients[index] = {
             ...updatedRecipients[index],
             emailSubject: content.subject,
             emailBody: content.body,
+            emailBodyHtml: content.bodyHtml,
             status: 'ready'
         };
       }));
@@ -237,14 +337,28 @@ const App: React.FC = () => {
 
     const subject = encodeURIComponent(recipient.emailSubject);
     const body = encodeURIComponent(recipient.emailBody);
-    const cc = globalCC; // Use global setting
     
-    window.open(`mailto:${recipient.email}?cc=${cc}&subject=${subject}&body=${body}`, '_blank');
+    // Outlook requirement: Separator must be ';'
+    // Ensure all comma separated values are replaced with semicolons
+    const cc = globalCC.replace(/,/g, ';').trim(); 
+    const to = recipient.email.replace(/,/g, ';').trim();
     
+    window.open(`mailto:${to}?cc=${cc}&subject=${subject}&body=${body}`, '_blank');
+    
+    // Log history
+    const log: SentLog = {
+        id: Date.now().toString() + Math.random(),
+        timestamp: new Date(),
+        recipientSigla: recipient.sigla,
+        recipientEmail: to,
+        subject: recipient.emailSubject
+    };
+    setSentHistory(prev => [log, ...prev]);
+
     setRecipients(prev => prev.map(r => r.id === recipient.id ? { ...r, status: 'sent' } : r));
   };
 
-  const handleSendAll = () => {
+  const handleSendPending = () => {
     const readyRecipients = recipients.filter(r => r.status === 'ready');
     if (readyRecipients.length === 0) return;
 
@@ -267,6 +381,24 @@ const App: React.FC = () => {
     }));
   };
 
+  const handleClearHistory = () => {
+    if (window.confirm("Tem certeza que deseja apagar todo o histórico de envios desta lista?")) {
+        setSentHistory([]);
+    }
+  };
+
+  // Filtered List
+  const getFilteredRecipients = () => {
+      if (activeTab === 'all') return recipients;
+      if (activeTab === 'pending') return recipients.filter(r => r.status === 'pending');
+      if (activeTab === 'ready') return recipients.filter(r => r.status === 'ready');
+      if (activeTab === 'sent') return recipients.filter(r => r.status === 'sent');
+      return recipients;
+  };
+
+  const displayRecipients = getFilteredRecipients();
+  const nextScan = getNextScanTime();
+
   // --- STATE VIEWS ---
 
   // 1. HOME SCREEN
@@ -274,7 +406,7 @@ const App: React.FC = () => {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 flex flex-col items-center justify-center p-4">
         <div className="max-w-4xl w-full bg-white rounded-2xl shadow-xl overflow-hidden flex flex-col md:flex-row min-h-[500px]">
-            {/* Left/Top Branding Side - Gradient Black to Blue */}
+            {/* Left/Top Branding Side */}
             <div className="bg-gradient-to-br from-gray-900 to-blue-900 p-12 flex flex-col justify-center items-center md:items-start md:w-5/12 text-center md:text-left text-white border-r border-gray-800">
                  <div className="bg-white p-4 rounded-2xl mb-8 shadow-lg shadow-black/20">
                     <img src={LOGO_URL} alt="Petacorp" className="h-16 w-auto object-contain" />
@@ -297,7 +429,7 @@ const App: React.FC = () => {
             
             {/* Right/Bottom Actions Side */}
             <div className="p-12 flex flex-col justify-center gap-6 md:w-7/12 bg-white">
-                <h2 className="text-2xl font-bold text-gray-800 mb-2">Bem-vindo</h2>
+                <h2 className="text-2xl font-bold text-gray-800 mb-2">Olá,</h2>
                 <p className="text-gray-500 mb-6">Selecione uma ação para continuar:</p>
 
                 <button 
@@ -309,7 +441,7 @@ const App: React.FC = () => {
                     </div>
                     <div>
                         <h3 className="font-bold text-gray-900 text-lg group-hover:text-blue-700 transition-colors">Gerenciar Clientes</h3>
-                        <p className="text-sm text-gray-500 mt-1">Cadastre, importe ou edite a lista de destinatários e órgãos.</p>
+                        <p className="text-sm text-gray-500 mt-1">Cadastre, importe ou edite a lista de destinatários.</p>
                     </div>
                 </button>
 
@@ -365,26 +497,36 @@ const App: React.FC = () => {
           <h2 className="text-3xl font-bold text-gray-900 mb-4">Selecionar Pasta Monitorada</h2>
           <p className="text-gray-600 mb-8 max-w-md mx-auto">
             Escolha a pasta local onde os anexos (PDFs, Docs) estão salvos para iniciar a varredura automática.
+            <br/><span className="text-xs text-gray-400 block mt-2">Para SharePoint: Selecione a pasta sincronizada no seu Windows Explorer.</span>
           </p>
 
-          <div className="bg-blue-50 border border-blue-100 rounded-lg p-4 mb-8 text-left w-full">
-            <h4 className="text-blue-800 font-semibold text-sm mb-2 flex items-center gap-2">
-                <LayoutDashboard className="w-4 h-4" />
-                Integração SharePoint / OneDrive
-            </h4>
-            <p className="text-xs text-blue-700 leading-relaxed">
-                Para monitorar arquivos em nuvem, certifique-se de que a pasta está sincronizada com seu computador via 
-                <strong> OneDrive</strong>. Navegue até a pasta do SharePoint no Windows Explorer (geralmente sob o ícone da empresa) e selecione-a aqui.
-            </p>
-          </div>
-          
           <button 
             onClick={handleSelectFolder}
-            className="px-8 py-4 bg-indigo-600 text-white rounded-xl font-semibold hover:bg-indigo-700 transition shadow-lg hover:shadow-xl hover:-translate-y-0.5 flex items-center gap-3 w-full sm:w-auto justify-center"
+            className="px-8 py-4 bg-indigo-600 text-white rounded-xl font-semibold hover:bg-indigo-700 transition shadow-lg hover:shadow-xl hover:-translate-y-0.5 flex items-center gap-3 w-full sm:w-auto justify-center mb-4"
           >
             <FolderOpen className="w-5 h-5" />
             Nova Pasta
           </button>
+          
+          {/* Compatibility Mode / Fallback Input */}
+          <div className="relative">
+              <input 
+                 type="file" 
+                 // @ts-ignore
+                 webkitdirectory="" 
+                 directory="" 
+                 multiple 
+                 onChange={handleFallbackFileSelect}
+                 className="hidden"
+                 ref={fallbackFileInputRef}
+              />
+              <button 
+                onClick={() => fallbackFileInputRef.current?.click()}
+                className="text-xs text-indigo-500 hover:text-indigo-700 underline"
+              >
+                Modo Compatibilidade (Se ocorrer erro ao abrir pasta)
+              </button>
+          </div>
 
            <button 
             onClick={() => setAppState(AppState.MANAGE_CLIENTS)}
@@ -394,7 +536,6 @@ const App: React.FC = () => {
             Precisa editar clientes antes?
           </button>
 
-          {/* FOLDER HISTORY */}
           {folderHistory.length > 0 && (
             <div className="mt-10 pt-8 border-t w-full">
                 <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-4 text-left flex items-center gap-2">
@@ -432,110 +573,134 @@ const App: React.FC = () => {
     <div className="min-h-screen bg-slate-50 flex flex-col relative">
       {/* Settings Modal */}
       {showSettings && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in duration-200">
-            <div className="flex justify-between items-center p-4 border-b">
-              <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2">
-                <Settings className="w-5 h-5 text-gray-600" />
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden animate-in fade-in zoom-in duration-200 flex flex-col max-h-[90vh]">
+            <div className="flex justify-between items-center p-5 border-b bg-gray-50">
+              <h3 className="text-xl font-bold text-gray-800 flex items-center gap-2">
+                <div className="p-2 bg-blue-100 rounded-lg"><Settings className="w-5 h-5 text-blue-600" /></div>
                 Configurações
               </h3>
-              <button onClick={() => setShowSettings(false)} className="text-gray-400 hover:text-gray-600">
-                <X className="w-5 h-5" />
+              <button onClick={() => setShowSettings(false)} className="text-gray-400 hover:text-red-500 transition">
+                <X className="w-6 h-6" />
               </button>
             </div>
             
-            <div className="p-6 space-y-6">
-              {/* CC Emails */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2 flex items-center gap-2">
-                    <Mail className="w-4 h-4 text-gray-500" />
-                    E-mails Cópia (CC)
-                </label>
-                <textarea 
-                    value={globalCC}
-                    onChange={(e) => setGlobalCC(e.target.value)}
-                    placeholder="email1@exemplo.com, email2@exemplo.com"
-                    className="w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-3 border text-sm h-24"
-                />
-                <p className="text-xs text-gray-400 mt-1">Separe os e-mails por vírgula.</p>
+            <div className="p-6 space-y-8 overflow-y-auto">
+              {/* Settings Content */}
+              <div className="space-y-3">
+                <h4 className="text-sm font-bold text-gray-500 uppercase tracking-wider flex items-center gap-2">
+                    <Mail className="w-4 h-4" />
+                    Destinatários Cópia (CC)
+                </h4>
+                <div className="bg-blue-50 border border-blue-100 p-4 rounded-lg">
+                    <p className="text-xs text-blue-700 mb-2">
+                        Estes e-mails serão adicionados automaticamente em Cópia em <strong>todos</strong> os disparos.
+                        <br/>
+                        <span className="opacity-75">Use <strong>ponto e vírgula (;)</strong> para separar múltiplos e-mails (Padrão Outlook).</span>
+                    </p>
+                    <textarea 
+                        value={globalCC}
+                        onChange={(e) => setGlobalCC(e.target.value)}
+                        placeholder="email1@petacorp.com.br; email2@petacorp.com.br"
+                        className="w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-3 border text-sm h-20"
+                    />
+                </div>
               </div>
+              
+              <hr className="border-gray-100" />
 
-              {/* Mode Selection */}
-              <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2 flex items-center gap-2">
-                    <Clock className="w-4 h-4 text-gray-500" />
-                    Varredura Automática
-                  </label>
+              <div className="space-y-3">
+                  <h4 className="text-sm font-bold text-gray-500 uppercase tracking-wider flex items-center gap-2">
+                    <Clock className="w-4 h-4" />
+                    Rotina de Varredura
+                  </h4>
+                  <p className="text-xs text-gray-500 mb-2">Defina com que frequência o sistema deve buscar novos arquivos na pasta selecionada.</p>
+                  
                   <div className="grid grid-cols-1 gap-3">
+                    {/* Manual Mode */}
                     <button
-                    onClick={() => setScanConfig({ ...scanConfig, mode: 'disabled' })}
-                    className={`p-3 rounded-lg border text-left flex items-center gap-3 transition-colors ${scanConfig.mode === 'disabled' ? 'bg-gray-100 border-gray-400 ring-1 ring-gray-400' : 'bg-white border-gray-200 hover:bg-gray-50'}`}
+                        onClick={() => setScanConfig({ ...scanConfig, mode: 'disabled' })}
+                        className={`p-4 rounded-xl border text-left flex items-start gap-3 transition-all ${
+                            scanConfig.mode === 'disabled' 
+                            ? 'bg-gray-800 text-white border-gray-800 shadow-lg' 
+                            : 'bg-white border-gray-200 hover:border-gray-300 text-gray-600'
+                        }`}
                     >
-                    <div className={`w-4 h-4 rounded-full border flex items-center justify-center ${scanConfig.mode === 'disabled' ? 'border-gray-600' : 'border-gray-300'}`}>
-                        {scanConfig.mode === 'disabled' && <div className="w-2 h-2 rounded-full bg-gray-600" />}
-                    </div>
-                    <div>
-                        <span className="font-medium text-gray-700">Manual</span>
-                        <p className="text-xs text-gray-500">Apenas quando clicar em atualizar</p>
-                    </div>
+                        <div className={`mt-0.5 w-5 h-5 rounded-full border flex items-center justify-center shrink-0 ${scanConfig.mode === 'disabled' ? 'border-white' : 'border-gray-300'}`}>
+                            {scanConfig.mode === 'disabled' && <div className="w-2.5 h-2.5 rounded-full bg-white" />}
+                        </div>
+                        <div>
+                            <span className="font-bold block text-sm">Manual (Padrão)</span>
+                            <span className={`text-xs ${scanConfig.mode === 'disabled' ? 'text-gray-300' : 'text-gray-400'}`}>
+                                A busca só ocorre quando você clica no botão atualizar ou troca de pasta.
+                            </span>
+                        </div>
                     </button>
 
+                    {/* Interval Mode */}
                     <button
-                    onClick={() => setScanConfig({ ...scanConfig, mode: 'interval' })}
-                    className={`p-3 rounded-lg border text-left flex items-center gap-3 transition-colors ${scanConfig.mode === 'interval' ? 'bg-blue-50 border-blue-400 ring-1 ring-blue-400' : 'bg-white border-gray-200 hover:bg-gray-50'}`}
+                        onClick={() => setScanConfig({ ...scanConfig, mode: 'interval' })}
+                        className={`p-4 rounded-xl border text-left flex items-start gap-3 transition-all ${
+                            scanConfig.mode === 'interval' 
+                            ? 'bg-blue-600 text-white border-blue-600 shadow-lg shadow-blue-200' 
+                            : 'bg-white border-gray-200 hover:border-blue-200 text-gray-600'
+                        }`}
                     >
-                    <div className={`w-4 h-4 rounded-full border flex items-center justify-center ${scanConfig.mode === 'interval' ? 'border-blue-600' : 'border-gray-300'}`}>
-                        {scanConfig.mode === 'interval' && <div className="w-2 h-2 rounded-full bg-blue-600" />}
-                    </div>
-                    <div className="flex-1">
-                        <div className="flex items-center gap-2">
-                            <Timer className="w-4 h-4 text-blue-600" />
-                            <span className="font-medium text-gray-700">Intervalos Regulares</span>
+                        <div className={`mt-0.5 w-5 h-5 rounded-full border flex items-center justify-center shrink-0 ${scanConfig.mode === 'interval' ? 'border-white' : 'border-gray-300'}`}>
+                            {scanConfig.mode === 'interval' && <div className="w-2.5 h-2.5 rounded-full bg-white" />}
                         </div>
-                        {scanConfig.mode === 'interval' && (
-                            <div className="mt-2 flex items-center gap-2">
-                                <select 
-                                    value={scanConfig.intervalMinutes}
-                                    onChange={(e) => setScanConfig({ ...scanConfig, intervalMinutes: Number(e.target.value) })}
-                                    className="text-sm border-gray-300 rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500 p-1 bg-white border"
-                                    onClick={(e) => e.stopPropagation()}
-                                >
-                                    <option value={5}>5 minutos</option>
-                                    <option value={10}>10 minutos</option>
-                                    <option value={15}>15 minutos</option>
-                                    <option value={30}>30 minutos</option>
-                                    <option value={60}>1 hora</option>
-                                </select>
-                            </div>
-                        )}
-                    </div>
+                        <div className="w-full">
+                            <span className="font-bold block text-sm flex justify-between items-center w-full">
+                                Intervalos Regulares
+                                {scanConfig.mode === 'interval' && (
+                                     <select 
+                                        value={scanConfig.intervalMinutes}
+                                        onChange={(e) => setScanConfig({ ...scanConfig, intervalMinutes: Number(e.target.value) })}
+                                        className="text-xs text-blue-800 bg-white border-none rounded py-0.5 pl-2 pr-6 cursor-pointer focus:ring-0"
+                                        onClick={(e) => e.stopPropagation()}
+                                    >
+                                        <option value={5}>5 min</option>
+                                        <option value={10}>10 min</option>
+                                        <option value={30}>30 min</option>
+                                        <option value={60}>1 hora</option>
+                                    </select>
+                                )}
+                            </span>
+                            <span className={`text-xs ${scanConfig.mode === 'interval' ? 'text-blue-100' : 'text-gray-400'}`}>
+                                Busca novos arquivos a cada X minutos automaticamente.
+                            </span>
+                        </div>
                     </button>
 
+                    {/* Fixed Mode */}
                     <button
-                    onClick={() => setScanConfig({ ...scanConfig, mode: 'fixed' })}
-                    className={`p-3 rounded-lg border text-left flex items-center gap-3 transition-colors ${scanConfig.mode === 'fixed' ? 'bg-indigo-50 border-indigo-400 ring-1 ring-indigo-400' : 'bg-white border-gray-200 hover:bg-gray-50'}`}
+                        onClick={() => setScanConfig({ ...scanConfig, mode: 'fixed' })}
+                        className={`p-4 rounded-xl border text-left flex items-start gap-3 transition-all ${
+                            scanConfig.mode === 'fixed' 
+                            ? 'bg-indigo-600 text-white border-indigo-600 shadow-lg shadow-indigo-200' 
+                            : 'bg-white border-gray-200 hover:border-indigo-200 text-gray-600'
+                        }`}
                     >
-                    <div className={`w-4 h-4 rounded-full border flex items-center justify-center ${scanConfig.mode === 'fixed' ? 'border-indigo-600' : 'border-gray-300'}`}>
-                        {scanConfig.mode === 'fixed' && <div className="w-2 h-2 rounded-full bg-indigo-600" />}
-                    </div>
-                    <div>
-                        <div className="flex items-center gap-2">
-                            <CalendarClock className="w-4 h-4 text-indigo-600" />
-                            <span className="font-medium text-gray-700">Horários Fixos</span>
+                        <div className={`mt-0.5 w-5 h-5 rounded-full border flex items-center justify-center shrink-0 ${scanConfig.mode === 'fixed' ? 'border-white' : 'border-gray-300'}`}>
+                            {scanConfig.mode === 'fixed' && <div className="w-2.5 h-2.5 rounded-full bg-white" />}
                         </div>
-                        <p className="text-xs text-gray-500 mt-1">Busca automática às 08:00, 12:00 e 16:00</p>
-                    </div>
+                        <div>
+                            <span className="font-bold block text-sm flex items-center gap-2">
+                                Horários Fixos
+                                {scanConfig.mode === 'fixed' && <span className="bg-indigo-500 text-xs px-2 py-0.5 rounded-full">Ativo</span>}
+                            </span>
+                            <span className={`text-xs ${scanConfig.mode === 'fixed' ? 'text-indigo-100' : 'text-gray-400'}`}>
+                                Executa a varredura automaticamente às <strong>08:00, 12:00 e 16:00</strong>.
+                            </span>
+                        </div>
                     </button>
                   </div>
               </div>
             </div>
 
-            <div className="p-4 border-t bg-gray-50 flex justify-end">
-              <button 
-                onClick={() => setShowSettings(false)}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium text-sm transition"
-              >
-                Salvar e Fechar
+            <div className="p-5 border-t bg-gray-50 flex justify-end gap-3">
+              <button onClick={() => setShowSettings(false)} className="px-6 py-2.5 bg-gray-800 text-white font-medium rounded-lg hover:bg-gray-900 transition shadow-lg">
+                Salvar Configurações
               </button>
             </div>
           </div>
@@ -555,211 +720,254 @@ const App: React.FC = () => {
           </div>
           
           <div className="flex items-center gap-4">
-             {/* Status Badge for Auto Scan */}
-             <div 
-                className={`hidden lg:flex items-center gap-2 text-xs px-3 py-1.5 rounded-full border ${
-                    scanConfig.mode !== 'disabled' ? 'bg-green-50 text-green-700 border-green-200' : 'bg-gray-50 text-gray-500 border-gray-200'
-                }`}
-             >
-                {scanConfig.mode === 'disabled' && <span>Auto: Off</span>}
-                {scanConfig.mode === 'interval' && <span>Auto: {scanConfig.intervalMinutes}min</span>}
-                {scanConfig.mode === 'fixed' && <span>Auto: 8h, 12h, 16h</span>}
-             </div>
-
-             <div className="hidden sm:flex items-center gap-2 text-sm text-gray-500 bg-gray-100 px-3 py-1.5 rounded-full">
-                <Clock className="w-4 h-4" />
-                <span>Última: {lastScanTime ? lastScanTime.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '--:--'}</span>
-             </div>
-
              <div className="flex items-center gap-2 border-l pl-4 ml-2">
-                <button 
-                    onClick={() => setAppState(AppState.SELECT_FOLDER)}
-                    className="p-2 rounded-full hover:bg-indigo-50 text-indigo-600 transition"
-                    title="Trocar Pasta"
-                >
-                    <FolderOpen className="w-5 h-5" />
-                </button>
-
-                <button 
-                    onClick={() => setAppState(AppState.HOME)}
-                    className="p-2 rounded-full hover:bg-gray-100 text-gray-600 transition"
-                    title="Início"
-                >
-                    <ArrowLeft className="w-5 h-5" />
-                </button>
-                
-                <button 
-                    onClick={() => setAppState(AppState.MANAGE_CLIENTS)}
-                    className="p-2 rounded-full hover:bg-gray-100 text-gray-600 transition hidden sm:block"
-                    title="Gerenciar Clientes"
-                >
-                    <Users className="w-5 h-5" />
-                </button>
-
-                <button 
-                    onClick={() => setShowSettings(true)}
-                    className="p-2 rounded-full hover:bg-gray-100 text-gray-600 transition"
-                    title="Configurações"
-                >
-                    <Settings className="w-5 h-5" />
-                </button>
-
-                <button 
-                    onClick={() => dirHandle && scanDirectory(dirHandle)}
-                    disabled={isScanning}
-                    className={`p-2 rounded-full hover:bg-gray-100 transition ${isScanning ? 'animate-spin text-blue-500' : 'text-gray-600'}`}
-                    title="Atualizar Agora"
-                >
-                    <RefreshCw className="w-5 h-5" />
-                </button>
+                <button onClick={() => setAppState(AppState.SELECT_FOLDER)} className="p-2 rounded-full hover:bg-indigo-50 text-indigo-600 transition" title="Trocar Pasta"><FolderOpen className="w-5 h-5" /></button>
+                <button onClick={() => setAppState(AppState.HOME)} className="p-2 rounded-full hover:bg-gray-100 text-gray-600 transition" title="Início"><ArrowLeft className="w-5 h-5" /></button>
+                <button onClick={() => setAppState(AppState.MANAGE_CLIENTS)} className="p-2 rounded-full hover:bg-gray-100 text-gray-600 transition hidden sm:block" title="Gerenciar Clientes"><Users className="w-5 h-5" /></button>
+                <button onClick={() => setShowSettings(true)} className="p-2 rounded-full hover:bg-gray-100 text-gray-600 transition" title="Configurações"><Settings className="w-5 h-5" /></button>
+                <button onClick={() => dirHandle && scanDirectory(dirHandle)} disabled={isScanning} className={`p-2 rounded-full hover:bg-gray-100 transition ${isScanning ? 'animate-spin text-blue-500' : 'text-gray-600'}`} title="Atualizar Agora"><RefreshCw className="w-5 h-5" /></button>
              </div>
           </div>
         </div>
+        
+        {/* Scan Status Bar */}
+        {dirHandle && (
+            <div className="bg-gray-50 border-b border-gray-200 px-4 py-1.5 text-xs text-gray-500 flex justify-center sm:justify-end gap-6 max-w-7xl mx-auto">
+                <div className="flex items-center gap-1.5">
+                    <MonitorPlay className="w-3.5 h-3.5" />
+                    Modo: <span className="font-semibold text-gray-700">
+                        {scanConfig.mode === 'disabled' && 'Manual'}
+                        {scanConfig.mode === 'interval' && `Automático (${scanConfig.intervalMinutes} min)`}
+                        {scanConfig.mode === 'fixed' && 'Horários Fixos'}
+                    </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                    <Clock className="w-3.5 h-3.5" />
+                    Última: <span className="font-medium text-gray-700">{lastScanTime ? lastScanTime.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '--:--'}</span>
+                </div>
+                {scanConfig.mode !== 'disabled' && (
+                    <div className="flex items-center gap-1.5">
+                        <Timer className="w-3.5 h-3.5 text-blue-600" />
+                        Próxima: <span className="font-medium text-blue-700">{nextScan ? nextScan.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '...'}</span>
+                    </div>
+                )}
+            </div>
+        )}
       </header>
 
       {/* Main Content */}
       <main className="flex-1 max-w-7xl mx-auto w-full px-4 py-8">
         
-        {/* Warning Banner */}
-        <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-8 flex items-start gap-3">
-            <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
-            <div className="text-sm text-amber-800">
-                <strong>Atenção:</strong> Devido à segurança do navegador, anexos não podem ser adicionados automaticamente.
-                Arraste o arquivo identificado para a janela do e-mail antes de enviar.
-            </div>
-        </div>
-
         {/* Stats Grid */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-            <div className="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
-                <div className="text-gray-500 text-sm font-medium mb-1">Pendentes</div>
+            <div className="bg-white p-6 rounded-xl border border-gray-100 shadow-sm relative overflow-hidden">
+                <div className="absolute top-0 left-0 w-1 h-full bg-red-400"></div>
+                <div className="text-red-500 text-sm font-medium mb-1">Aguardando Arquivo</div>
                 <div className="text-3xl font-bold text-gray-900">
                     {recipients.filter(r => r.status === 'pending').length}
                 </div>
             </div>
-            <div className="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
-                <div className="text-blue-500 text-sm font-medium mb-1">Arquivos Encontrados</div>
-                <div className="text-3xl font-bold text-blue-600">
-                    {recipients.filter(r => r.status === 'file_found' || r.status === 'ready').length}
+            <div className="bg-white p-6 rounded-xl border border-gray-100 shadow-sm relative overflow-hidden">
+                <div className="absolute top-0 left-0 w-1 h-full bg-yellow-400"></div>
+                <div className="text-yellow-600 text-sm font-medium mb-1">Prontos para Envio</div>
+                <div className="text-3xl font-bold text-yellow-700">
+                    {recipients.filter(r => r.status === 'ready').length}
                 </div>
             </div>
-            <div className="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
-                <div className="text-green-500 text-sm font-medium mb-1">Enviados</div>
+            <div className="bg-white p-6 rounded-xl border border-gray-100 shadow-sm relative overflow-hidden">
+                <div className="absolute top-0 left-0 w-1 h-full bg-green-400"></div>
+                <div className="text-green-500 text-sm font-medium mb-1">Enviados (Sessão)</div>
                 <div className="text-3xl font-bold text-green-600">
                     {recipients.filter(r => r.status === 'sent').length}
                 </div>
             </div>
             
-            {/* Action Card */}
-            <div className="bg-indigo-50 p-6 rounded-xl border border-indigo-100 shadow-sm flex flex-col justify-center items-center">
+            {/* Send Pending Action Card */}
+            <div className="bg-yellow-50 p-6 rounded-xl border border-yellow-100 shadow-sm flex flex-col justify-center items-center">
                 <button
-                    onClick={handleSendAll}
+                    onClick={handleSendPending}
                     disabled={recipients.filter(r => r.status === 'ready').length === 0}
-                    className="w-full py-2 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 transition flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed shadow"
+                    className="w-full py-2 bg-yellow-600 text-white rounded-lg font-bold hover:bg-yellow-700 transition flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed shadow"
                 >
                     <Zap className="w-4 h-4" />
-                    Enviar Todos ({recipients.filter(r => r.status === 'ready').length})
+                    Enviar Pendentes ({recipients.filter(r => r.status === 'ready').length})
                 </button>
-                <span className="text-[10px] text-indigo-400 mt-2 text-center">Requer permissão de pop-ups</span>
+                <span className="text-[10px] text-yellow-700 mt-2 text-center">Abrirá múltiplos e-mails</span>
             </div>
         </div>
 
-        {/* List */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-            <div className="overflow-x-auto">
+        {/* Highlighted Filters/Tabs */}
+        <div className="flex items-center gap-4 mb-6 overflow-x-auto pb-2">
+            {[
+                { id: 'all', label: 'Todos', count: recipients.length, color: 'bg-gray-100 text-gray-600', active: 'bg-gray-800 text-white shadow-lg' },
+                { id: 'pending', label: 'Aguardando', count: recipients.filter(r => r.status === 'pending').length, color: 'bg-red-50 text-red-600', active: 'bg-red-600 text-white shadow-lg shadow-red-200' },
+                { id: 'ready', label: 'Prontos', count: recipients.filter(r => r.status === 'ready').length, color: 'bg-yellow-50 text-yellow-700', active: 'bg-yellow-500 text-white shadow-lg shadow-yellow-200' },
+                { id: 'sent', label: 'Enviados', count: recipients.filter(r => r.status === 'sent').length, color: 'bg-green-50 text-green-600', active: 'bg-green-600 text-white shadow-lg shadow-green-200' },
+                { id: 'history', label: 'Histórico', count: null, color: 'bg-indigo-50 text-indigo-600', active: 'bg-indigo-600 text-white shadow-lg shadow-indigo-200' },
+            ].map(tab => (
+                <button
+                    key={tab.id}
+                    onClick={() => setActiveTab(tab.id as DashboardTab)}
+                    className={`px-5 py-3 rounded-xl font-medium transition-all duration-300 flex items-center gap-2 min-w-[120px] justify-center ${
+                        activeTab === tab.id ? tab.active : `${tab.color} hover:bg-opacity-80`
+                    }`}
+                >
+                    {tab.id === 'history' && <History className="w-4 h-4" />}
+                    <span>{tab.label}</span>
+                    {tab.count !== null && (
+                        <span className={`text-xs px-2 py-0.5 rounded-full ${activeTab === tab.id ? 'bg-white/20' : 'bg-black/5'}`}>
+                            {tab.count}
+                        </span>
+                    )}
+                </button>
+            ))}
+        </div>
+
+        {/* History View */}
+        {activeTab === 'history' ? (
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in slide-in-from-bottom-2">
+                <div className="flex justify-between items-center px-6 py-4 border-b border-gray-100">
+                    <h3 className="font-bold text-gray-700 text-lg">Log de Envios</h3>
+                    {sentHistory.length > 0 && (
+                        <button 
+                            onClick={handleClearHistory}
+                            className="flex items-center gap-2 text-sm text-red-500 hover:text-red-700 hover:bg-red-50 px-3 py-1.5 rounded-lg transition"
+                        >
+                            <Trash2 className="w-4 h-4" />
+                            Limpar Histórico
+                        </button>
+                    )}
+                </div>
                 <table className="w-full text-left">
                     <thead className="bg-gray-50 border-b border-gray-200">
                         <tr>
+                            <th className="px-6 py-4 font-semibold text-gray-700 text-sm">Data/Hora</th>
                             <th className="px-6 py-4 font-semibold text-gray-700 text-sm">Destinatário</th>
-                            <th className="px-6 py-4 font-semibold text-gray-700 text-sm">Status</th>
-                            <th className="px-6 py-4 font-semibold text-gray-700 text-sm">Arquivo Identificado</th>
-                            <th className="px-6 py-4 font-semibold text-gray-700 text-sm text-right">Ação</th>
+                            <th className="px-6 py-4 font-semibold text-gray-700 text-sm">Assunto</th>
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
-                        {recipients.map((recipient) => (
-                            <tr key={recipient.id} className="hover:bg-gray-50 transition-colors">
-                                <td className="px-6 py-4">
-                                    <div className="font-medium text-gray-900">{recipient.sigla}</div>
-                                    <div className="text-xs text-gray-500">{recipient.name}</div>
-                                    <div className="text-xs text-gray-400">{recipient.email}</div>
+                        {sentHistory.map(log => (
+                            <tr key={log.id} className="hover:bg-gray-50">
+                                <td className="px-6 py-4 text-sm text-gray-500">
+                                    {log.timestamp.toLocaleString()}
                                 </td>
                                 <td className="px-6 py-4">
-                                    {recipient.status === 'pending' && (
-                                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-600">
-                                            <Search className="w-3 h-3" /> Aguardando arquivo
-                                        </span>
-                                    )}
-                                    {recipient.status === 'file_found' && (
-                                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-700 animate-pulse">
-                                            <RefreshCw className="w-3 h-3 animate-spin" /> Gerando E-mail...
-                                        </span>
-                                    )}
-                                    {recipient.status === 'ready' && (
-                                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-indigo-100 text-indigo-700">
-                                            <CheckCircle className="w-3 h-3" /> Pronto para envio
-                                        </span>
-                                    )}
-                                    {recipient.status === 'sent' && (
-                                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700">
-                                            <CheckCircle className="w-3 h-3" /> Enviado
-                                        </span>
-                                    )}
+                                    <div className="font-medium text-gray-900">{log.recipientSigla}</div>
+                                    <div className="text-xs text-gray-400">{log.recipientEmail}</div>
                                 </td>
-                                <td className="px-6 py-4">
-                                    {recipient.matchedFileName ? (
-                                        <div className="flex items-center gap-2 text-sm text-gray-700">
-                                            <FileIcon className="w-4 h-4 text-gray-400" />
-                                            <span className="font-mono bg-gray-100 px-1 rounded">{recipient.matchedFileName}</span>
-                                        </div>
-                                    ) : (
-                                        <span className="text-sm text-gray-300 italic">Nenhum arquivo correspondente</span>
-                                    )}
-                                </td>
-                                <td className="px-6 py-4 text-right">
-                                    {recipient.status === 'ready' ? (
-                                        <button 
-                                            onClick={() => handleSend(recipient)}
-                                            className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition shadow-sm hover:shadow active:scale-95"
-                                        >
-                                            <Send className="w-4 h-4" />
-                                            Enviar E-mail
-                                        </button>
-                                    ) : recipient.status === 'sent' ? (
-                                        <div className="flex items-center justify-end gap-2">
-                                            <button 
-                                                disabled 
-                                                className="inline-flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-400 text-sm font-medium rounded-lg cursor-not-allowed"
-                                            >
-                                                Concluído
-                                            </button>
-                                            <button
-                                                onClick={() => handleResetStatus(recipient)}
-                                                className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition"
-                                                title="Desfazer envio"
-                                            >
-                                                <RotateCcw className="w-4 h-4" />
-                                            </button>
-                                        </div>
-                                    ) : (
-                                        <button disabled className="inline-flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-300 text-sm font-medium rounded-lg cursor-not-allowed">
-                                            Aguardando
-                                        </button>
-                                    )}
+                                <td className="px-6 py-4 text-sm text-gray-600">
+                                    {log.subject}
                                 </td>
                             </tr>
                         ))}
-                        {recipients.length === 0 && (
-                            <tr>
-                                <td colSpan={4} className="px-6 py-12 text-center text-gray-400">
-                                    Nenhum cliente cadastrado.
-                                </td>
-                            </tr>
+                        {sentHistory.length === 0 && (
+                            <tr><td colSpan={3} className="p-8 text-center text-gray-400">Nenhum envio registrado nesta sessão.</td></tr>
                         )}
                     </tbody>
                 </table>
             </div>
-        </div>
+        ) : (
+            /* Main List */
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in slide-in-from-bottom-2">
+                <div className="overflow-x-auto">
+                    <table className="w-full text-left">
+                        <thead className="bg-gray-50 border-b border-gray-200">
+                            <tr>
+                                <th className="px-6 py-4 font-semibold text-gray-700 text-sm">Sigla / Órgão</th>
+                                <th className="px-6 py-4 font-semibold text-gray-700 text-sm">Status</th>
+                                <th className="px-6 py-4 font-semibold text-gray-700 text-sm">Arquivo Identificado</th>
+                                <th className="px-6 py-4 font-semibold text-gray-700 text-sm text-right">Ação</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                            {displayRecipients.map((recipient) => (
+                                <tr key={recipient.id} className="hover:bg-gray-50 transition-colors">
+                                    <td className="px-6 py-4">
+                                        <div className="text-lg font-bold text-gray-900">{recipient.sigla}</div>
+                                        <div className="text-xs text-gray-500 mt-0.5">{recipient.name}</div>
+                                        <div className="text-xs text-gray-400 mt-1 max-w-xs truncate" title={recipient.email}>
+                                            {recipient.email}
+                                        </div>
+                                    </td>
+                                    <td className="px-6 py-4">
+                                        {recipient.status === 'pending' && (
+                                            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-red-100 text-red-800 border border-red-200">
+                                                <Search className="w-3 h-3" /> Aguardando Arquivo
+                                            </span>
+                                        )}
+                                        {recipient.status === 'file_found' && (
+                                            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-700 animate-pulse">
+                                                <RefreshCw className="w-3 h-3 animate-spin" /> Gerando...
+                                            </span>
+                                        )}
+                                        {recipient.status === 'ready' && (
+                                            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-yellow-100 text-yellow-800 border border-yellow-200">
+                                                <CheckCircle className="w-3 h-3" /> Pronto p/ Envio
+                                            </span>
+                                        )}
+                                        {recipient.status === 'sent' && (
+                                            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700 border border-green-200">
+                                                <CheckCircle className="w-3 h-3" /> Enviado
+                                            </span>
+                                        )}
+                                    </td>
+                                    <td className="px-6 py-4">
+                                        {recipient.matchedFileName ? (
+                                            <div>
+                                                <div className="flex items-center gap-2 text-sm text-gray-700">
+                                                    <FileIcon className="w-4 h-4 text-gray-400" />
+                                                    <span className="font-mono bg-gray-100 px-1 rounded">{recipient.matchedFileName}</span>
+                                                </div>
+                                                {recipient.matchedTime && (
+                                                    <div className="text-[10px] text-gray-400 mt-1 pl-6">
+                                                        Identificado em: {recipient.matchedTime.toLocaleDateString()} às {recipient.matchedTime.toLocaleTimeString()}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        ) : (
+                                            <span className="text-sm text-gray-300 italic">--</span>
+                                        )}
+                                    </td>
+                                    <td className="px-6 py-4 text-right">
+                                        {recipient.status === 'ready' ? (
+                                            <button 
+                                                onClick={() => handleSend(recipient)}
+                                                className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition shadow-sm hover:shadow active:scale-95"
+                                            >
+                                                <Send className="w-4 h-4" />
+                                                Enviar
+                                            </button>
+                                        ) : recipient.status === 'sent' ? (
+                                            <div className="flex items-center justify-end gap-2">
+                                                <button
+                                                    onClick={() => handleResetStatus(recipient)}
+                                                    className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition"
+                                                    title="Marcar como pendente novamente"
+                                                >
+                                                    <RotateCcw className="w-4 h-4" />
+                                                </button>
+                                            </div>
+                                        ) : (
+                                            <button disabled className="opacity-0 cursor-default">
+                                                -
+                                            </button>
+                                        )}
+                                    </td>
+                                </tr>
+                            ))}
+                            {displayRecipients.length === 0 && (
+                                <tr>
+                                    <td colSpan={4} className="px-6 py-12 text-center text-gray-400">
+                                        Nenhum registro encontrado para este filtro.
+                                    </td>
+                                </tr>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        )}
       </main>
 
       {/* Footer */}

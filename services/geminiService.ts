@@ -1,4 +1,3 @@
-
 import { GoogleGenAI, Type } from "@google/genai";
 import { EmailGenerationResponse } from "../types";
 
@@ -6,7 +5,37 @@ const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 // Helper to remove accents and special characters for comparison
 const normalizeText = (text: string) => {
-  return text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  return text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9 ]/g, "");
+};
+
+/**
+ * Determines the correct preposition (Ao/À) based on the Agency Name.
+ * Checks for common feminine starting words in Portuguese context.
+ */
+const determineArticle = (name: string): string => {
+    const feminineStarts = [
+        'secretaria', 'fundacao', 'procuradoria', 'defensoria', 
+        'agencia', 'diretoria', 'superintendencia', 'companhia', 
+        'comissao', 'delegacia', 'corregedoria', 'escola', 
+        'universidade', 'gerencia', 'camara', 'coordenadoria', 
+        'vara', 'justica', 'associacao', 'coordenacao', 'administracao'
+    ];
+    
+    // Clean up input to avoid issues with punctuation like "À Secretaria..." or "- Secretaria"
+    const cleanName = normalizeText(name).trim();
+    const parts = cleanName.split(' ');
+    
+    if (parts.length === 0) return 'Ao';
+    
+    const firstWord = parts[0];
+    
+    // Check if the first word is in the feminine list
+    if (feminineStarts.includes(firstWord)) {
+        return 'À';
+    }
+    
+    // Default masculine
+    return 'Ao';
 };
 
 /**
@@ -77,10 +106,33 @@ export const generateEmailContent = async (
     }
   }
 
-  // 3. Construct Template
-  // Formatting Requirement: Line break after "Ao"
-  const body = `Ao
-${agencyName},
+  // 3. Determine Greeting Preposition
+  // IMPORTANT: We use agencyName (which usually holds the Full Name e.g. "Secretaria de Saúde") for this check.
+  const preposition = determineArticle(recipientName); 
+
+  const subject = `Relatório de ${reportType} - ${agencyName} - ${monthName}/${year}`;
+  const signatureUrl = "https://i.ibb.co/1Y4dQvpD/2-small.png";
+
+  // 4. Construct HTML Body (for internal use/future features)
+  const bodyHtml = `
+    <div style="font-family: sans-serif; color: #000;">
+      <p>${preposition}<br><strong>${recipientName}</strong>,</p>
+      <br>
+      <p>Prezados(as) Senhores(as),</p>
+      <p>Encaminhamos, em anexo, o relatório de <strong>${reportType}</strong> referente ao mês de ${monthName} de ${year}.</p>
+      <p>Colocamo-nos à disposição para quaisquer esclarecimentos que se fizerem necessários.</p>
+      <br>
+      <p>Atenciosamente,</p>
+      <br>
+      <img src="${signatureUrl}" alt="Assinatura Petacorp" style="max-width: 100%; height: auto;" />
+      <br>
+      <a href="${signatureUrl}">${signatureUrl}</a>
+    </div>
+  `;
+
+  // 5. Construct Plain Text Body (for mailto compatibility)
+  const body = `${preposition}
+${recipientName},
 
 Prezados(as) Senhores(as),
 
@@ -90,13 +142,12 @@ Colocamo-nos à disposição para quaisquer esclarecimentos que se fizerem neces
 
 Atenciosamente,
 
-https://1drv.ms/i/c/9001c56eb955c86d/IQR6eojwjvGgSYkp266gHvyqAawCgXODNSK6ct0fNeb6GVQ`;
-
-  const subject = `Relatório de ${reportType} - ${agencyName} - ${monthName}/${year}`;
+${signatureUrl}`;
 
   return Promise.resolve({
     subject,
-    body
+    body,
+    bodyHtml
   });
 };
 
@@ -104,7 +155,7 @@ export const findBestMatch = async (
   targetName: string,
   availableFiles: string[]
 ): Promise<string | null> => {
-  // Kept for backward compatibility or future AI fuzzy matching usage
+  // Kept for backward compatibility
   if (availableFiles.length === 0) return null;
   return null; 
 };
