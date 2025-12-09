@@ -4,6 +4,8 @@ import { AppState, Recipient, FileEntry } from './types';
 import { CsvUploader } from './components/CsvUploader';
 import { findBestMatch, generateEmailContent, findKeywordMatch } from './services/geminiService';
 
+const LOGO_URL = "https://1drv.ms/i/c/9001c56eb955c86d/IQR6eojwjvGgSYkp266gHvyqAawCgXODNSK6ct0fNeb6GVQ";
+
 const App: React.FC = () => {
   const [appState, setAppState] = useState<AppState>(AppState.UPLOAD_CSV);
   const [recipients, setRecipients] = useState<Recipient[]>([]);
@@ -182,33 +184,17 @@ const App: React.FC = () => {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50">
         <div className="bg-white p-12 rounded-2xl shadow-xl text-center max-w-2xl w-full">
+          <div className="flex justify-center mb-6">
+            <img src={LOGO_URL} alt="Petacorp Logo" className="h-12 object-contain" />
+          </div>
           <div className="bg-indigo-50 p-6 rounded-full inline-block mb-6">
             <FolderOpen className="w-16 h-16 text-indigo-600" />
           </div>
           <h2 className="text-3xl font-bold text-gray-900 mb-4">Selecionar Pasta Monitorada</h2>
           <p className="text-gray-600 mb-6">
-            Escolha a pasta onde os anexos (PDFs, Docs) serão salvos.
+            Escolha a pasta onde os anexos (PDFs, Docs) estão salvos.
           </p>
           
-          <div className="mb-8 p-4 bg-gray-50 border border-gray-200 rounded-lg text-left">
-            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2 block">Caminho Sugerido</label>
-            <div className="flex items-center gap-2 bg-white p-2 rounded border border-gray-200">
-                <code className="text-xs text-gray-600 font-mono break-all flex-1">
-                    C:\Users\bruno.mendes\Petacorp\File Server - Documentos\Governança\Relatórios mensais
-                </code>
-                <button 
-                  onClick={() => navigator.clipboard.writeText('C:\\Users\\bruno.mendes\\Petacorp\\File Server - Documentos\\Governança\\Relatórios mensais')}
-                  className="p-1.5 hover:bg-gray-100 rounded text-gray-500 hover:text-blue-600 transition"
-                  title="Copiar caminho"
-                >
-                    <Copy className="w-4 h-4" />
-                </button>
-            </div>
-            <p className="text-[10px] text-gray-400 mt-2">
-                * Navegue manualmente até este local na janela que se abrirá.
-            </p>
-          </div>
-
           <button 
             onClick={handleSelectFolder}
             className="px-8 py-4 bg-indigo-600 text-white rounded-xl font-semibold hover:bg-indigo-700 transition shadow-lg hover:shadow-xl flex items-center gap-3 mx-auto w-full justify-center sm:w-auto"
@@ -226,10 +212,9 @@ const App: React.FC = () => {
       {/* Header */}
       <header className="bg-white border-b sticky top-0 z-10 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
-          <div className="flex items-center gap-3">
-            <div className="bg-blue-600 p-2 rounded-lg">
-              <Mail className="w-6 h-6 text-white" />
-            </div>
+          <div className="flex items-center gap-4">
+            <img src={LOGO_URL} alt="Petacorp Logo" className="h-10 w-auto object-contain" />
+            <div className="h-8 w-px bg-gray-200"></div>
             <div>
               <h1 className="text-xl font-bold text-gray-900">AutoMail Dispatcher</h1>
               <p className="text-xs text-gray-500">Monitorando: {dirHandle?.name || '...'}</p>
