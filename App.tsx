@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { FolderOpen, RefreshCw, Send, CheckCircle, Clock, File as FileIcon, Search, Mail, AlertTriangle, Copy, RotateCcw, Zap } from 'lucide-react';
-import { AppState, Recipient, FileEntry } from './types';
+
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { FolderOpen, RefreshCw, Send, CheckCircle, Clock, File as FileIcon, Search, AlertTriangle, RotateCcw, Zap, Settings, X, CalendarClock, Timer } from 'lucide-react';
+import { AppState, Recipient, FileEntry, AutoScanConfig } from './types';
 import { CsvUploader } from './components/CsvUploader';
-import { findBestMatch, generateEmailContent, findKeywordMatch } from './services/geminiService';
+import { generateEmailContent, findKeywordMatch } from './services/geminiService';
 
 const LOGO_URL = "https://1drv.ms/i/c/9001c56eb955c86d/IQR6eojwjvGgSYkp266gHvyqAawCgXODNSK6ct0fNeb6GVQ";
 
@@ -13,6 +14,11 @@ const App: React.FC = () => {
   const [files, setFiles] = useState<FileEntry[]>([]);
   const [isScanning, setIsScanning] = useState(false);
   const [lastScanTime, setLastScanTime] = useState<Date | null>(null);
+  
+  // Auto Scan State
+  const [scanConfig, setScanConfig] = useState<AutoScanConfig>({ mode: 'disabled', intervalMinutes: 30 });
+  const [showSettings, setShowSettings] = useState(false);
+  const lastAutoScanRef = useRef<number>(0); // Timestamp of last successful auto-scan execution
 
   // 1. Handle CSV Load
   const handleCsvLoaded = (data: Recipient[]) => {
@@ -55,7 +61,51 @@ const App: React.FC = () => {
     }
   }, []);
 
-  // 4. Matching Logic (Triggered when files or recipients change)
+  // 4. Auto-Scan Heartbeat
+  useEffect(() => {
+    if (!dirHandle || scanConfig.mode === 'disabled') return;
+
+    const checkAutoScan = () => {
+      if (isScanning) return;
+      const now = new Date();
+      const currentTimestamp = now.getTime();
+      
+      // Prevent double scanning in the same minute for fixed time, or rapid fire
+      if (currentTimestamp - lastAutoScanRef.current < 60000) return;
+
+      let shouldScan = false;
+
+      if (scanConfig.mode === 'interval') {
+        const lastRun = lastScanTime ? lastScanTime.getTime() : 0;
+        const diffMinutes = (currentTimestamp - lastRun) / 60000;
+        if (diffMinutes >= scanConfig.intervalMinutes) {
+          shouldScan = true;
+        }
+      } else if (scanConfig.mode === 'fixed') {
+        // 08:00, 12:00, 16:00
+        const hour = now.getHours();
+        const minute = now.getMinutes();
+        const targetHours = [8, 12, 16];
+        
+        // Check if we are in the target hour and within the first minute
+        if (targetHours.includes(hour) && minute === 0) {
+          shouldScan = true;
+        }
+      }
+
+      if (shouldScan) {
+        lastAutoScanRef.current = currentTimestamp;
+        scanDirectory(dirHandle);
+      }
+    };
+
+    // Heartbeat every 10 seconds to check time
+    const intervalId = setInterval(checkAutoScan, 10000);
+    return () => clearInterval(intervalId);
+  }, [dirHandle, scanConfig, lastScanTime, isScanning, scanDirectory]);
+
+
+  // 5. Matching Logic (Triggered when files or recipients change)
   useEffect(() => {
     if (files.length === 0 || recipients.length === 0) return;
 
@@ -81,19 +131,6 @@ const App: React.FC = () => {
             hasChanges = true;
             continue;
         }
-
-        // If no strict match found, we leave it as pending (as requested: "se for diferente não considerar")
-        // We removed the fallback to generic "names only" if the agency was provided but not found.
-        // However, if Agency was empty/unknown, findKeywordMatch handles it by checking name only.
-        
-        // AI Fallback (Optional - only if strict logic is too strict, but keeping it for edge cases)
-        /* 
-        const aiMatchName = await findBestMatch(r.name, fileNames);
-        if (aiMatchName) {
-            updatedRecipients[i] = { ...r, status: 'file_found', matchedFileName: aiMatchName };
-            hasChanges = true;
-        }
-        */
       }
 
       if (hasChanges) {
@@ -105,7 +142,7 @@ const App: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [files]); 
 
-  // 5. Generate Email Content (Triggered when a file is found but content not generated)
+  // 6. Generate Email Content (Triggered when a file is found but content not generated)
   useEffect(() => {
     const generateContent = async () => {
       const targets = recipients.filter(r => r.status === 'file_found' && !r.emailBody);
@@ -208,7 +245,98 @@ const App: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col">
+    <div className="min-h-screen bg-slate-50 flex flex-col relative">
+      {/* Settings Modal */}
+      {showSettings && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in duration-200">
+            <div className="flex justify-between items-center p-4 border-b">
+              <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2">
+                <Settings className="w-5 h-5 text-gray-600" />
+                Configurar Varredura Automática
+              </h3>
+              <button onClick={() => setShowSettings(false)} className="text-gray-400 hover:text-gray-600">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <div className="p-6 space-y-4">
+              {/* Mode Selection */}
+              <div className="grid grid-cols-1 gap-3">
+                <button
+                  onClick={() => setScanConfig({ ...scanConfig, mode: 'disabled' })}
+                  className={`p-3 rounded-lg border text-left flex items-center gap-3 transition-colors ${scanConfig.mode === 'disabled' ? 'bg-gray-100 border-gray-400 ring-1 ring-gray-400' : 'bg-white border-gray-200 hover:bg-gray-50'}`}
+                >
+                  <div className={`w-4 h-4 rounded-full border flex items-center justify-center ${scanConfig.mode === 'disabled' ? 'border-gray-600' : 'border-gray-300'}`}>
+                    {scanConfig.mode === 'disabled' && <div className="w-2 h-2 rounded-full bg-gray-600" />}
+                  </div>
+                  <div>
+                    <span className="font-medium text-gray-700">Manual</span>
+                    <p className="text-xs text-gray-500">Apenas quando clicar em atualizar</p>
+                  </div>
+                </button>
+
+                <button
+                  onClick={() => setScanConfig({ ...scanConfig, mode: 'interval' })}
+                  className={`p-3 rounded-lg border text-left flex items-center gap-3 transition-colors ${scanConfig.mode === 'interval' ? 'bg-blue-50 border-blue-400 ring-1 ring-blue-400' : 'bg-white border-gray-200 hover:bg-gray-50'}`}
+                >
+                  <div className={`w-4 h-4 rounded-full border flex items-center justify-center ${scanConfig.mode === 'interval' ? 'border-blue-600' : 'border-gray-300'}`}>
+                    {scanConfig.mode === 'interval' && <div className="w-2 h-2 rounded-full bg-blue-600" />}
+                  </div>
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2">
+                        <Timer className="w-4 h-4 text-blue-600" />
+                        <span className="font-medium text-gray-700">Intervalos Regulares</span>
+                    </div>
+                    {scanConfig.mode === 'interval' && (
+                        <div className="mt-2 flex items-center gap-2">
+                             <select 
+                                value={scanConfig.intervalMinutes}
+                                onChange={(e) => setScanConfig({ ...scanConfig, intervalMinutes: Number(e.target.value) })}
+                                className="text-sm border-gray-300 rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500 p-1 bg-white border"
+                                onClick={(e) => e.stopPropagation()}
+                             >
+                                <option value={5}>5 minutos</option>
+                                <option value={10}>10 minutos</option>
+                                <option value={15}>15 minutos</option>
+                                <option value={30}>30 minutos</option>
+                                <option value={60}>1 hora</option>
+                             </select>
+                        </div>
+                    )}
+                  </div>
+                </button>
+
+                <button
+                  onClick={() => setScanConfig({ ...scanConfig, mode: 'fixed' })}
+                  className={`p-3 rounded-lg border text-left flex items-center gap-3 transition-colors ${scanConfig.mode === 'fixed' ? 'bg-indigo-50 border-indigo-400 ring-1 ring-indigo-400' : 'bg-white border-gray-200 hover:bg-gray-50'}`}
+                >
+                  <div className={`w-4 h-4 rounded-full border flex items-center justify-center ${scanConfig.mode === 'fixed' ? 'border-indigo-600' : 'border-gray-300'}`}>
+                    {scanConfig.mode === 'fixed' && <div className="w-2 h-2 rounded-full bg-indigo-600" />}
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                        <CalendarClock className="w-4 h-4 text-indigo-600" />
+                        <span className="font-medium text-gray-700">Horários Fixos</span>
+                    </div>
+                    <p className="text-xs text-gray-500 mt-1">Busca automática às 08:00, 12:00 e 16:00</p>
+                  </div>
+                </button>
+              </div>
+            </div>
+
+            <div className="p-4 border-t bg-gray-50 flex justify-end">
+              <button 
+                onClick={() => setShowSettings(false)}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium text-sm transition"
+              >
+                Confirmar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <header className="bg-white border-b sticky top-0 z-10 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
@@ -222,17 +350,40 @@ const App: React.FC = () => {
           </div>
           
           <div className="flex items-center gap-4">
+             {/* Status Badge for Auto Scan */}
+             <div 
+                className={`hidden md:flex items-center gap-2 text-xs px-3 py-1.5 rounded-full border ${
+                    scanConfig.mode !== 'disabled' ? 'bg-green-50 text-green-700 border-green-200' : 'bg-gray-50 text-gray-500 border-gray-200'
+                }`}
+             >
+                {scanConfig.mode === 'disabled' && <span>Auto: Off</span>}
+                {scanConfig.mode === 'interval' && <span>Auto: {scanConfig.intervalMinutes}min</span>}
+                {scanConfig.mode === 'fixed' && <span>Auto: 8h, 12h, 16h</span>}
+             </div>
+
              <div className="flex items-center gap-2 text-sm text-gray-500 bg-gray-100 px-3 py-1.5 rounded-full">
                 <Clock className="w-4 h-4" />
-                <span>Última leitura: {lastScanTime ? lastScanTime.toLocaleTimeString() : 'Nunca'}</span>
+                <span>Última: {lastScanTime ? lastScanTime.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '--:--'}</span>
              </div>
-             <button 
-                onClick={() => dirHandle && scanDirectory(dirHandle)}
-                disabled={isScanning}
-                className={`p-2 rounded-full hover:bg-gray-100 transition ${isScanning ? 'animate-spin text-blue-500' : 'text-gray-600'}`}
-             >
-                <RefreshCw className="w-5 h-5" />
-             </button>
+
+             <div className="flex items-center gap-2 border-l pl-4">
+                <button 
+                    onClick={() => setShowSettings(true)}
+                    className="p-2 rounded-full hover:bg-gray-100 text-gray-600 transition"
+                    title="Configurações de Varredura"
+                >
+                    <Settings className="w-5 h-5" />
+                </button>
+
+                <button 
+                    onClick={() => dirHandle && scanDirectory(dirHandle)}
+                    disabled={isScanning}
+                    className={`p-2 rounded-full hover:bg-gray-100 transition ${isScanning ? 'animate-spin text-blue-500' : 'text-gray-600'}`}
+                    title="Atualizar Agora"
+                >
+                    <RefreshCw className="w-5 h-5" />
+                </button>
+             </div>
           </div>
         </div>
       </header>

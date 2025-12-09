@@ -1,3 +1,4 @@
+
 export interface Recipient {
   id: string;
   name: string;
@@ -23,4 +24,11 @@ export enum AppState {
 export interface EmailGenerationResponse {
   subject: string;
   body: string;
+}
+
+export type AutoScanMode = 'disabled' | 'interval' | 'fixed';
+
+export interface AutoScanConfig {
+  mode: AutoScanMode;
+  intervalMinutes: number; // Used if mode is 'interval'
 }
