@@ -31,13 +31,17 @@ export const CsvUploader: React.FC<CsvUploaderProps> = ({ onDataLoaded }) => {
         }
         
         // Simple mapping (assuming columns exist or fuzzy mapping)
-        const recipients: Recipient[] = rows.map((row, index) => ({
-          id: `rec-${index}`,
-          name: row['Nome'] || row['nome'] || row['Name'] || 'Desconhecido',
-          agency: row['Orgao'] || row['orgao'] || row['Órgão'] || row['Agency'] || 'Geral',
-          email: row['Email'] || row['email'] || row['E-mail'] || '',
-          status: 'pending' as const
-        })).filter(r => r.email && r.name !== 'Desconhecido');
+        const recipients: Recipient[] = rows.map((row, index) => {
+          const agency = row['Orgao'] || row['orgao'] || row['Órgão'] || row['Agency'] || 'Geral';
+          return {
+            id: `rec-${index}`,
+            name: row['Nome'] || row['nome'] || row['Name'] || 'Desconhecido',
+            agency: agency,
+            sigla: agency,
+            email: row['Email'] || row['email'] || row['E-mail'] || '',
+            status: 'pending' as const
+          };
+        }).filter(r => r.email && r.name !== 'Desconhecido');
 
         if (recipients.length === 0) {
             setError("Não foi possível identificar colunas de Nome e Email válidas.");

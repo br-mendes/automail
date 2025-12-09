@@ -1,3 +1,4 @@
+
 import { GoogleGenAI, Type } from "@google/genai";
 import { EmailGenerationResponse } from "../types";
 
@@ -30,7 +31,7 @@ export const findKeywordMatch = (
         
         // STRICT RULE: "exemplo: nome do órgão JFAL, arquivo deve conter JFAL"
         if (hasSpecificAgency) {
-            // If the user has a defined agency, the file MUST contain that agency tag.
+            // If the user has a defined agency (Sigla), the file MUST contain that agency tag.
             // We ignore the name in this specific strict mode to avoid false positives 
             // (e.g. "Maria" exists in many agencies, but we only want the one for "JFAL").
             return normFileName.includes(cleanAgency);

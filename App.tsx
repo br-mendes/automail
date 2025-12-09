@@ -1,52 +1,99 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { FolderOpen, RefreshCw, Send, CheckCircle, Clock, File as FileIcon, Search, AlertTriangle, RotateCcw, Zap, Settings, X, CalendarClock, Timer } from 'lucide-react';
-import { AppState, Recipient, FileEntry, AutoScanConfig } from './types';
-import { CsvUploader } from './components/CsvUploader';
+import { FolderOpen, RefreshCw, Send, CheckCircle, Clock, File as FileIcon, Search, AlertTriangle, RotateCcw, Zap, Settings, X, CalendarClock, Timer, Users, Mail, ArrowLeft, LayoutDashboard } from 'lucide-react';
+import { AppState, Client, Recipient, FileEntry, AutoScanConfig } from './types';
+import { ClientManager } from './components/ClientManager';
 import { generateEmailContent, findKeywordMatch } from './services/geminiService';
 
 const LOGO_URL = "https://1drv.ms/i/c/9001c56eb955c86d/IQR6eojwjvGgSYkp266gHvyqAawCgXODNSK6ct0fNeb6GVQ";
 
 const App: React.FC = () => {
-  const [appState, setAppState] = useState<AppState>(AppState.UPLOAD_CSV);
+  const [appState, setAppState] = useState<AppState>(AppState.HOME);
+  
+  // Data
+  const [clients, setClients] = useState<Client[]>([]);
   const [recipients, setRecipients] = useState<Recipient[]>([]);
+  
+  // Settings
+  const [globalCC, setGlobalCC] = useState<string>("suporte-gerencial@petacorp.com.br,financeiro@petacorp.com.br");
+  const [scanConfig, setScanConfig] = useState<AutoScanConfig>({ mode: 'disabled', intervalMinutes: 30 });
+  const [showSettings, setShowSettings] = useState(false);
+
+  // File System
   const [dirHandle, setDirHandle] = useState<FileSystemDirectoryHandle | null>(null);
   const [files, setFiles] = useState<FileEntry[]>([]);
   const [isScanning, setIsScanning] = useState(false);
   const [lastScanTime, setLastScanTime] = useState<Date | null>(null);
   
-  // Auto Scan State
-  const [scanConfig, setScanConfig] = useState<AutoScanConfig>({ mode: 'disabled', intervalMinutes: 30 });
-  const [showSettings, setShowSettings] = useState(false);
-  const lastAutoScanRef = useRef<number>(0); // Timestamp of last successful auto-scan execution
+  const lastAutoScanRef = useRef<number>(0);
 
-  // 1. Handle CSV Load
-  const handleCsvLoaded = (data: Recipient[]) => {
-    setRecipients(data);
-    setAppState(AppState.SELECT_FOLDER);
-  };
+  // 1. Initialize from LocalStorage
+  useEffect(() => {
+    const savedClients = localStorage.getItem('petacorp_clients');
+    const savedCC = localStorage.getItem('petacorp_cc');
+    
+    if (savedClients) {
+      try {
+        setClients(JSON.parse(savedClients));
+      } catch (e) {
+        console.error("Failed to parse saved clients");
+      }
+    }
 
-  // 2. Handle Folder Selection
+    if (savedCC) {
+      setGlobalCC(savedCC);
+    }
+  }, []);
+
+  // 2. Save to LocalStorage when changed
+  useEffect(() => {
+    localStorage.setItem('petacorp_clients', JSON.stringify(clients));
+  }, [clients]);
+
+  useEffect(() => {
+    localStorage.setItem('petacorp_cc', globalCC);
+  }, [globalCC]);
+
+  // 3. Map Clients to Runtime Recipients when clients or folder ready
+  useEffect(() => {
+    // Only map if we don't have active state or if forced update needed
+    // Simple strategy: Re-map on client change, preserving status if possible?
+    // For simplicity: When clients change, we rebuild the recipient list.
+    
+    setRecipients(prev => {
+        return clients.map(client => {
+            const existing = prev.find(p => p.id === client.id);
+            return {
+                ...client,
+                agency: client.sigla, // Logic compatibility
+                status: existing ? existing.status : 'pending',
+                matchedFileName: existing ? existing.matchedFileName : undefined,
+                emailSubject: existing ? existing.emailSubject : undefined,
+                emailBody: existing ? existing.emailBody : undefined,
+            };
+        });
+    });
+  }, [clients]);
+
+  // 4. Handle Folder Selection
   const handleSelectFolder = async () => {
     try {
       const handle = await (window as any).showDirectoryPicker();
       setDirHandle(handle);
       setAppState(AppState.DASHBOARD);
-      // Trigger initial scan
       await scanDirectory(handle);
     } catch (err) {
       console.error("Folder access denied or cancelled", err);
     }
   };
 
-  // 3. Scan Logic
+  // 5. Scan Logic
   const scanDirectory = useCallback(async (handle: FileSystemDirectoryHandle) => {
     setIsScanning(true);
     const newFiles: FileEntry[] = [];
     
     try {
-      // Iterate through directory
-      // @ts-ignore - TypeScript lib might accept AsyncIterable, but define explicitly if needed
+      // @ts-ignore
       for await (const entry of handle.values()) {
         if (entry.kind === 'file') {
           newFiles.push({ name: entry.name, handle: entry as FileSystemFileHandle });
@@ -61,7 +108,7 @@ const App: React.FC = () => {
     }
   }, []);
 
-  // 4. Auto-Scan Heartbeat
+  // 6. Auto-Scan Heartbeat
   useEffect(() => {
     if (!dirHandle || scanConfig.mode === 'disabled') return;
 
@@ -70,7 +117,6 @@ const App: React.FC = () => {
       const now = new Date();
       const currentTimestamp = now.getTime();
       
-      // Prevent double scanning in the same minute for fixed time, or rapid fire
       if (currentTimestamp - lastAutoScanRef.current < 60000) return;
 
       let shouldScan = false;
@@ -82,12 +128,10 @@ const App: React.FC = () => {
           shouldScan = true;
         }
       } else if (scanConfig.mode === 'fixed') {
-        // 08:00, 12:00, 16:00
         const hour = now.getHours();
         const minute = now.getMinutes();
         const targetHours = [8, 12, 16];
         
-        // Check if we are in the target hour and within the first minute
         if (targetHours.includes(hour) && minute === 0) {
           shouldScan = true;
         }
@@ -99,13 +143,12 @@ const App: React.FC = () => {
       }
     };
 
-    // Heartbeat every 10 seconds to check time
     const intervalId = setInterval(checkAutoScan, 10000);
     return () => clearInterval(intervalId);
   }, [dirHandle, scanConfig, lastScanTime, isScanning, scanDirectory]);
 
 
-  // 5. Matching Logic (Triggered when files or recipients change)
+  // 7. Matching Logic
   useEffect(() => {
     if (files.length === 0 || recipients.length === 0) return;
 
@@ -117,14 +160,13 @@ const App: React.FC = () => {
       for (let i = 0; i < updatedRecipients.length; i++) {
         const r = updatedRecipients[i];
         
-        // Skip if already matched and file still exists
         if (r.status !== 'pending' && r.matchedFileName && fileNames.includes(r.matchedFileName)) {
             continue;
         }
 
-        // --- UPDATED STRICT LOGIC ---
-        // Pass both Name and Agency to the strict matcher
-        const strictMatch = findKeywordMatch(r.name, r.agency, fileNames);
+        // STRICT MATCH: Use Client.sigla (mapped to agency) for strict file matching (e.g. JFAL)
+        // Use Client.name as fallback if sigla not present? No, specific strictness requested.
+        const strictMatch = findKeywordMatch(r.name, r.sigla, fileNames);
         
         if (strictMatch) {
             updatedRecipients[i] = { ...r, status: 'file_found', matchedFileName: strictMatch };
@@ -142,7 +184,7 @@ const App: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [files]); 
 
-  // 6. Generate Email Content (Triggered when a file is found but content not generated)
+  // 8. Generate Email Content
   useEffect(() => {
     const generateContent = async () => {
       const targets = recipients.filter(r => r.status === 'file_found' && !r.emailBody);
@@ -155,7 +197,8 @@ const App: React.FC = () => {
         const index = updatedRecipients.findIndex(r => r.id === target.id);
         if (index === -1) return;
 
-        const content = await generateEmailContent(target.name, target.agency, target.matchedFileName!);
+        // Use Client Name (Full Name) for the Email Body greeting "Ao [Name]"
+        const content = await generateEmailContent(target.name, target.name, target.matchedFileName!);
         updatedRecipients[index] = {
             ...updatedRecipients[index],
             emailSubject: content.subject,
@@ -171,21 +214,19 @@ const App: React.FC = () => {
   }, [recipients]);
 
 
-  // Helper: Open Mail Client
+  // Helpers
   const handleSend = (recipient: Recipient) => {
     if (!recipient.emailBody || !recipient.emailSubject) return;
 
     const subject = encodeURIComponent(recipient.emailSubject);
     const body = encodeURIComponent(recipient.emailBody);
-    const cc = "suporte-gerencial@petacorp.com.br,financeiro@petacorp.com.br";
+    const cc = globalCC; // Use global setting
     
     window.open(`mailto:${recipient.email}?cc=${cc}&subject=${subject}&body=${body}`, '_blank');
     
-    // Update status to sent locally
     setRecipients(prev => prev.map(r => r.id === recipient.id ? { ...r, status: 'sent' } : r));
   };
 
-  // Helper: Send All Ready
   const handleSendAll = () => {
     const readyRecipients = recipients.filter(r => r.status === 'ready');
     if (readyRecipients.length === 0) return;
@@ -198,12 +239,9 @@ const App: React.FC = () => {
     });
   };
 
-  // Helper: Reset Status
   const handleResetStatus = (recipient: Recipient) => {
     setRecipients(prev => prev.map(r => {
         if (r.id !== recipient.id) return r;
-        
-        // If file still exists, go to ready, otherwise pending
         const fileExists = files.some(f => f.name === r.matchedFileName);
         return {
             ...r,
@@ -212,38 +250,120 @@ const App: React.FC = () => {
     }));
   };
 
-  // Render Functions
-  if (appState === AppState.UPLOAD_CSV) {
-    return <CsvUploader onDataLoaded={handleCsvLoaded} />;
+  // --- STATE VIEWS ---
+
+  // 1. HOME SCREEN
+  if (appState === AppState.HOME) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 flex flex-col items-center justify-center p-4">
+        <div className="max-w-4xl w-full bg-white rounded-2xl shadow-xl overflow-hidden flex flex-col md:flex-row min-h-[500px]">
+            {/* Left/Top Branding Side */}
+            <div className="bg-gradient-to-br from-blue-700 to-indigo-800 p-12 text-white flex flex-col justify-center items-center md:items-start md:w-5/12 text-center md:text-left">
+                 <div className="bg-white/10 p-4 rounded-2xl mb-8 backdrop-blur-sm">
+                    <img src={LOGO_URL} alt="Petacorp" className="h-16 w-auto object-contain" />
+                 </div>
+                 <h1 className="text-3xl font-bold mb-4 leading-tight">AutoMail Dispatcher</h1>
+                 <p className="text-blue-100 text-lg mb-8 leading-relaxed">
+                    Automação inteligente de e-mails corporativos com reconhecimento de arquivos via IA.
+                 </p>
+                 <div className="mt-auto text-xs text-blue-200 opacity-60">
+                    Versão 2.5 • Petacorp
+                 </div>
+            </div>
+            
+            {/* Right/Bottom Actions Side */}
+            <div className="p-12 flex flex-col justify-center gap-6 md:w-7/12 bg-white">
+                <h2 className="text-2xl font-bold text-gray-800 mb-2">Bem-vindo</h2>
+                <p className="text-gray-500 mb-6">Selecione uma ação para continuar:</p>
+
+                <button 
+                    onClick={() => setAppState(AppState.MANAGE_CLIENTS)}
+                    className="group flex items-start gap-5 p-6 rounded-2xl border border-gray-100 hover:border-blue-500/30 hover:bg-blue-50/50 transition-all text-left shadow-sm hover:shadow-md"
+                >
+                    <div className="bg-blue-100 p-3.5 rounded-xl group-hover:bg-blue-600 group-hover:scale-110 transition-all duration-300">
+                        <Users className="w-6 h-6 text-blue-600 group-hover:text-white" />
+                    </div>
+                    <div>
+                        <h3 className="font-bold text-gray-900 text-lg group-hover:text-blue-700 transition-colors">Gerenciar Clientes</h3>
+                        <p className="text-sm text-gray-500 mt-1">Cadastre, importe ou edite a lista de destinatários e órgãos.</p>
+                    </div>
+                </button>
+
+                <button 
+                    onClick={() => setAppState(AppState.SELECT_FOLDER)}
+                    className="group flex items-start gap-5 p-6 rounded-2xl border border-gray-100 hover:border-indigo-500/30 hover:bg-indigo-50/50 transition-all text-left shadow-sm hover:shadow-md"
+                >
+                    <div className="bg-indigo-100 p-3.5 rounded-xl group-hover:bg-indigo-600 group-hover:scale-110 transition-all duration-300">
+                        <LayoutDashboard className="w-6 h-6 text-indigo-600 group-hover:text-white" />
+                    </div>
+                    <div>
+                        <h3 className="font-bold text-gray-900 text-lg group-hover:text-indigo-700 transition-colors">Monitorar Arquivos</h3>
+                        <p className="text-sm text-gray-500 mt-1">Selecione a pasta de arquivos locais e inicie os disparos.</p>
+                    </div>
+                </button>
+            </div>
+        </div>
+      </div>
+    );
   }
 
+  // 2. CLIENT MANAGER
+  if (appState === AppState.MANAGE_CLIENTS) {
+    return (
+        <ClientManager 
+            clients={clients} 
+            onUpdateClients={setClients} 
+            onNext={() => setAppState(AppState.SELECT_FOLDER)} 
+            onBack={() => setAppState(AppState.HOME)}
+        />
+    );
+  }
+
+  // 3. SELECT FOLDER
   if (appState === AppState.SELECT_FOLDER) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50">
-        <div className="bg-white p-12 rounded-2xl shadow-xl text-center max-w-2xl w-full">
-          <div className="flex justify-center mb-6">
-            <img src={LOGO_URL} alt="Petacorp Logo" className="h-12 object-contain" />
+      <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 relative p-4">
+        <button 
+            onClick={() => setAppState(AppState.HOME)}
+            className="absolute top-6 left-6 flex items-center gap-2 text-gray-500 hover:text-gray-800 transition px-4 py-2 rounded-full hover:bg-white/80"
+        >
+            <ArrowLeft className="w-5 h-5" />
+            Voltar ao Início
+        </button>
+
+        <div className="bg-white p-12 rounded-2xl shadow-xl text-center max-w-2xl w-full flex flex-col items-center">
+          <div className="mb-8">
+            <img src={LOGO_URL} alt="Petacorp Logo" className="h-12 object-contain mx-auto" />
           </div>
           <div className="bg-indigo-50 p-6 rounded-full inline-block mb-6">
             <FolderOpen className="w-16 h-16 text-indigo-600" />
           </div>
           <h2 className="text-3xl font-bold text-gray-900 mb-4">Selecionar Pasta Monitorada</h2>
-          <p className="text-gray-600 mb-6">
-            Escolha a pasta onde os anexos (PDFs, Docs) estão salvos.
+          <p className="text-gray-600 mb-8 max-w-md mx-auto">
+            Escolha a pasta local onde os anexos (PDFs, Docs) estão salvos para iniciar a varredura automática.
           </p>
           
           <button 
             onClick={handleSelectFolder}
-            className="px-8 py-4 bg-indigo-600 text-white rounded-xl font-semibold hover:bg-indigo-700 transition shadow-lg hover:shadow-xl flex items-center gap-3 mx-auto w-full justify-center sm:w-auto"
+            className="px-8 py-4 bg-indigo-600 text-white rounded-xl font-semibold hover:bg-indigo-700 transition shadow-lg hover:shadow-xl hover:-translate-y-0.5 flex items-center gap-3 w-full sm:w-auto justify-center"
           >
             <FolderOpen className="w-5 h-5" />
             Escolher Pasta
+          </button>
+
+           <button 
+            onClick={() => setAppState(AppState.MANAGE_CLIENTS)}
+            className="mt-6 text-sm text-gray-400 hover:text-indigo-600 flex items-center gap-1.5 transition"
+          >
+            <Users className="w-4 h-4" />
+            Precisa editar clientes antes?
           </button>
         </div>
       </div>
     );
   }
 
+  // 4. DASHBOARD (DEFAULT)
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col relative">
       {/* Settings Modal */}
@@ -253,75 +373,96 @@ const App: React.FC = () => {
             <div className="flex justify-between items-center p-4 border-b">
               <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2">
                 <Settings className="w-5 h-5 text-gray-600" />
-                Configurar Varredura Automática
+                Configurações
               </h3>
               <button onClick={() => setShowSettings(false)} className="text-gray-400 hover:text-gray-600">
                 <X className="w-5 h-5" />
               </button>
             </div>
             
-            <div className="p-6 space-y-4">
+            <div className="p-6 space-y-6">
+              {/* CC Emails */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2 flex items-center gap-2">
+                    <Mail className="w-4 h-4 text-gray-500" />
+                    E-mails Cópia (CC)
+                </label>
+                <textarea 
+                    value={globalCC}
+                    onChange={(e) => setGlobalCC(e.target.value)}
+                    placeholder="email1@exemplo.com, email2@exemplo.com"
+                    className="w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-3 border text-sm h-24"
+                />
+                <p className="text-xs text-gray-400 mt-1">Separe os e-mails por vírgula.</p>
+              </div>
+
               {/* Mode Selection */}
-              <div className="grid grid-cols-1 gap-3">
-                <button
-                  onClick={() => setScanConfig({ ...scanConfig, mode: 'disabled' })}
-                  className={`p-3 rounded-lg border text-left flex items-center gap-3 transition-colors ${scanConfig.mode === 'disabled' ? 'bg-gray-100 border-gray-400 ring-1 ring-gray-400' : 'bg-white border-gray-200 hover:bg-gray-50'}`}
-                >
-                  <div className={`w-4 h-4 rounded-full border flex items-center justify-center ${scanConfig.mode === 'disabled' ? 'border-gray-600' : 'border-gray-300'}`}>
-                    {scanConfig.mode === 'disabled' && <div className="w-2 h-2 rounded-full bg-gray-600" />}
-                  </div>
-                  <div>
-                    <span className="font-medium text-gray-700">Manual</span>
-                    <p className="text-xs text-gray-500">Apenas quando clicar em atualizar</p>
-                  </div>
-                </button>
-
-                <button
-                  onClick={() => setScanConfig({ ...scanConfig, mode: 'interval' })}
-                  className={`p-3 rounded-lg border text-left flex items-center gap-3 transition-colors ${scanConfig.mode === 'interval' ? 'bg-blue-50 border-blue-400 ring-1 ring-blue-400' : 'bg-white border-gray-200 hover:bg-gray-50'}`}
-                >
-                  <div className={`w-4 h-4 rounded-full border flex items-center justify-center ${scanConfig.mode === 'interval' ? 'border-blue-600' : 'border-gray-300'}`}>
-                    {scanConfig.mode === 'interval' && <div className="w-2 h-2 rounded-full bg-blue-600" />}
-                  </div>
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2">
-                        <Timer className="w-4 h-4 text-blue-600" />
-                        <span className="font-medium text-gray-700">Intervalos Regulares</span>
+              <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2 flex items-center gap-2">
+                    <Clock className="w-4 h-4 text-gray-500" />
+                    Varredura Automática
+                  </label>
+                  <div className="grid grid-cols-1 gap-3">
+                    <button
+                    onClick={() => setScanConfig({ ...scanConfig, mode: 'disabled' })}
+                    className={`p-3 rounded-lg border text-left flex items-center gap-3 transition-colors ${scanConfig.mode === 'disabled' ? 'bg-gray-100 border-gray-400 ring-1 ring-gray-400' : 'bg-white border-gray-200 hover:bg-gray-50'}`}
+                    >
+                    <div className={`w-4 h-4 rounded-full border flex items-center justify-center ${scanConfig.mode === 'disabled' ? 'border-gray-600' : 'border-gray-300'}`}>
+                        {scanConfig.mode === 'disabled' && <div className="w-2 h-2 rounded-full bg-gray-600" />}
                     </div>
-                    {scanConfig.mode === 'interval' && (
-                        <div className="mt-2 flex items-center gap-2">
-                             <select 
-                                value={scanConfig.intervalMinutes}
-                                onChange={(e) => setScanConfig({ ...scanConfig, intervalMinutes: Number(e.target.value) })}
-                                className="text-sm border-gray-300 rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500 p-1 bg-white border"
-                                onClick={(e) => e.stopPropagation()}
-                             >
-                                <option value={5}>5 minutos</option>
-                                <option value={10}>10 minutos</option>
-                                <option value={15}>15 minutos</option>
-                                <option value={30}>30 minutos</option>
-                                <option value={60}>1 hora</option>
-                             </select>
+                    <div>
+                        <span className="font-medium text-gray-700">Manual</span>
+                        <p className="text-xs text-gray-500">Apenas quando clicar em atualizar</p>
+                    </div>
+                    </button>
+
+                    <button
+                    onClick={() => setScanConfig({ ...scanConfig, mode: 'interval' })}
+                    className={`p-3 rounded-lg border text-left flex items-center gap-3 transition-colors ${scanConfig.mode === 'interval' ? 'bg-blue-50 border-blue-400 ring-1 ring-blue-400' : 'bg-white border-gray-200 hover:bg-gray-50'}`}
+                    >
+                    <div className={`w-4 h-4 rounded-full border flex items-center justify-center ${scanConfig.mode === 'interval' ? 'border-blue-600' : 'border-gray-300'}`}>
+                        {scanConfig.mode === 'interval' && <div className="w-2 h-2 rounded-full bg-blue-600" />}
+                    </div>
+                    <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                            <Timer className="w-4 h-4 text-blue-600" />
+                            <span className="font-medium text-gray-700">Intervalos Regulares</span>
                         </div>
-                    )}
-                  </div>
-                </button>
-
-                <button
-                  onClick={() => setScanConfig({ ...scanConfig, mode: 'fixed' })}
-                  className={`p-3 rounded-lg border text-left flex items-center gap-3 transition-colors ${scanConfig.mode === 'fixed' ? 'bg-indigo-50 border-indigo-400 ring-1 ring-indigo-400' : 'bg-white border-gray-200 hover:bg-gray-50'}`}
-                >
-                  <div className={`w-4 h-4 rounded-full border flex items-center justify-center ${scanConfig.mode === 'fixed' ? 'border-indigo-600' : 'border-gray-300'}`}>
-                    {scanConfig.mode === 'fixed' && <div className="w-2 h-2 rounded-full bg-indigo-600" />}
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                        <CalendarClock className="w-4 h-4 text-indigo-600" />
-                        <span className="font-medium text-gray-700">Horários Fixos</span>
+                        {scanConfig.mode === 'interval' && (
+                            <div className="mt-2 flex items-center gap-2">
+                                <select 
+                                    value={scanConfig.intervalMinutes}
+                                    onChange={(e) => setScanConfig({ ...scanConfig, intervalMinutes: Number(e.target.value) })}
+                                    className="text-sm border-gray-300 rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500 p-1 bg-white border"
+                                    onClick={(e) => e.stopPropagation()}
+                                >
+                                    <option value={5}>5 minutos</option>
+                                    <option value={10}>10 minutos</option>
+                                    <option value={15}>15 minutos</option>
+                                    <option value={30}>30 minutos</option>
+                                    <option value={60}>1 hora</option>
+                                </select>
+                            </div>
+                        )}
                     </div>
-                    <p className="text-xs text-gray-500 mt-1">Busca automática às 08:00, 12:00 e 16:00</p>
+                    </button>
+
+                    <button
+                    onClick={() => setScanConfig({ ...scanConfig, mode: 'fixed' })}
+                    className={`p-3 rounded-lg border text-left flex items-center gap-3 transition-colors ${scanConfig.mode === 'fixed' ? 'bg-indigo-50 border-indigo-400 ring-1 ring-indigo-400' : 'bg-white border-gray-200 hover:bg-gray-50'}`}
+                    >
+                    <div className={`w-4 h-4 rounded-full border flex items-center justify-center ${scanConfig.mode === 'fixed' ? 'border-indigo-600' : 'border-gray-300'}`}>
+                        {scanConfig.mode === 'fixed' && <div className="w-2 h-2 rounded-full bg-indigo-600" />}
+                    </div>
+                    <div>
+                        <div className="flex items-center gap-2">
+                            <CalendarClock className="w-4 h-4 text-indigo-600" />
+                            <span className="font-medium text-gray-700">Horários Fixos</span>
+                        </div>
+                        <p className="text-xs text-gray-500 mt-1">Busca automática às 08:00, 12:00 e 16:00</p>
+                    </div>
+                    </button>
                   </div>
-                </button>
               </div>
             </div>
 
@@ -330,7 +471,7 @@ const App: React.FC = () => {
                 onClick={() => setShowSettings(false)}
                 className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium text-sm transition"
               >
-                Confirmar
+                Salvar e Fechar
               </button>
             </div>
           </div>
@@ -342,17 +483,17 @@ const App: React.FC = () => {
         <div className="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
           <div className="flex items-center gap-4">
             <img src={LOGO_URL} alt="Petacorp Logo" className="h-10 w-auto object-contain" />
-            <div className="h-8 w-px bg-gray-200"></div>
+            <div className="h-8 w-px bg-gray-200 hidden sm:block"></div>
             <div>
-              <h1 className="text-xl font-bold text-gray-900">AutoMail Dispatcher</h1>
-              <p className="text-xs text-gray-500">Monitorando: {dirHandle?.name || '...'}</p>
+              <h1 className="text-xl font-bold text-gray-900 hidden sm:block">AutoMail Dispatcher</h1>
+              <p className="text-xs text-gray-500 hidden sm:block">Monitorando: {dirHandle?.name || '...'}</p>
             </div>
           </div>
           
           <div className="flex items-center gap-4">
              {/* Status Badge for Auto Scan */}
              <div 
-                className={`hidden md:flex items-center gap-2 text-xs px-3 py-1.5 rounded-full border ${
+                className={`hidden lg:flex items-center gap-2 text-xs px-3 py-1.5 rounded-full border ${
                     scanConfig.mode !== 'disabled' ? 'bg-green-50 text-green-700 border-green-200' : 'bg-gray-50 text-gray-500 border-gray-200'
                 }`}
              >
@@ -361,16 +502,32 @@ const App: React.FC = () => {
                 {scanConfig.mode === 'fixed' && <span>Auto: 8h, 12h, 16h</span>}
              </div>
 
-             <div className="flex items-center gap-2 text-sm text-gray-500 bg-gray-100 px-3 py-1.5 rounded-full">
+             <div className="hidden sm:flex items-center gap-2 text-sm text-gray-500 bg-gray-100 px-3 py-1.5 rounded-full">
                 <Clock className="w-4 h-4" />
                 <span>Última: {lastScanTime ? lastScanTime.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '--:--'}</span>
              </div>
 
-             <div className="flex items-center gap-2 border-l pl-4">
+             <div className="flex items-center gap-2 border-l pl-4 ml-2">
+                <button 
+                    onClick={() => setAppState(AppState.HOME)}
+                    className="p-2 rounded-full hover:bg-gray-100 text-gray-600 transition"
+                    title="Início"
+                >
+                    <ArrowLeft className="w-5 h-5" />
+                </button>
+                
+                <button 
+                    onClick={() => setAppState(AppState.MANAGE_CLIENTS)}
+                    className="p-2 rounded-full hover:bg-gray-100 text-gray-600 transition hidden sm:block"
+                    title="Gerenciar Clientes"
+                >
+                    <Users className="w-5 h-5" />
+                </button>
+
                 <button 
                     onClick={() => setShowSettings(true)}
                     className="p-2 rounded-full hover:bg-gray-100 text-gray-600 transition"
-                    title="Configurações de Varredura"
+                    title="Configurações"
                 >
                     <Settings className="w-5 h-5" />
                 </button>
@@ -451,8 +608,8 @@ const App: React.FC = () => {
                         {recipients.map((recipient) => (
                             <tr key={recipient.id} className="hover:bg-gray-50 transition-colors">
                                 <td className="px-6 py-4">
-                                    <div className="font-medium text-gray-900">{recipient.name}</div>
-                                    <div className="text-xs text-gray-500">{recipient.agency}</div>
+                                    <div className="font-medium text-gray-900">{recipient.sigla}</div>
+                                    <div className="text-xs text-gray-500">{recipient.name}</div>
                                     <div className="text-xs text-gray-400">{recipient.email}</div>
                                 </td>
                                 <td className="px-6 py-4">
@@ -523,7 +680,7 @@ const App: React.FC = () => {
                         {recipients.length === 0 && (
                             <tr>
                                 <td colSpan={4} className="px-6 py-12 text-center text-gray-400">
-                                    Nenhum destinatário carregado.
+                                    Nenhum cliente cadastrado.
                                 </td>
                             </tr>
                         )}

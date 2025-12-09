@@ -1,13 +1,17 @@
 
-export interface Recipient {
+export interface Client {
   id: string;
-  name: string;
-  agency: string; // Órgão
-  email: string;
+  sigla: string; // Ex: JFAL (Used for matching)
+  name: string; // Ex: Justiça Federal de Alagoas (Used for Email Body)
+  email: string; // To recipients
+}
+
+export interface Recipient extends Client {
   status: 'pending' | 'file_found' | 'ready' | 'sent';
   matchedFileName?: string;
   emailSubject?: string;
   emailBody?: string;
+  agency: string; // Kept for compatibility, maps to sigla or name depending on usage
 }
 
 export interface FileEntry {
@@ -16,7 +20,8 @@ export interface FileEntry {
 }
 
 export enum AppState {
-  UPLOAD_CSV = 'UPLOAD_CSV',
+  HOME = 'HOME',
+  MANAGE_CLIENTS = 'MANAGE_CLIENTS',
   SELECT_FOLDER = 'SELECT_FOLDER',
   DASHBOARD = 'DASHBOARD'
 }
