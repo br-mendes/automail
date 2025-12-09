@@ -1,11 +1,9 @@
-
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { FolderOpen, RefreshCw, Send, CheckCircle, Clock, File as FileIcon, Search, AlertTriangle, RotateCcw, Zap, Settings, X, CalendarClock, Timer, Users, Mail, ArrowLeft, LayoutDashboard, History, ChevronRight, Filter, MonitorPlay, Trash2 } from 'lucide-react';
 import { AppState, Client, Recipient, FileEntry, AutoScanConfig, SentLog, DashboardTab } from './types';
 import { ClientManager } from './components/ClientManager';
 import { generateEmailContent, findKeywordMatch } from './services/geminiService';
-
-const LOGO_URL = "https://i.ibb.co/1Y4dQvpD/2-small.png";
+import { COMPANY_LOGO_URL } from './constants';
 
 const App: React.FC = () => {
   const [appState, setAppState] = useState<AppState>(AppState.HOME);
@@ -409,7 +407,7 @@ const App: React.FC = () => {
             {/* Left/Top Branding Side */}
             <div className="bg-gradient-to-br from-gray-900 to-blue-900 p-12 flex flex-col justify-center items-center md:items-start md:w-5/12 text-center md:text-left text-white border-r border-gray-800">
                  <div className="bg-white p-4 rounded-2xl mb-8 shadow-lg shadow-black/20">
-                    <img src={LOGO_URL} alt="Petacorp" className="h-16 w-auto object-contain" />
+                    <img src={COMPANY_LOGO_URL} alt="Petacorp" className="h-16 w-auto object-contain" />
                  </div>
                  <h1 className="text-3xl font-bold mb-4 leading-tight">AutoMail Dispatcher</h1>
                  <p className="text-blue-100/90 text-lg mb-8 leading-relaxed">
@@ -489,7 +487,7 @@ const App: React.FC = () => {
 
         <div className="bg-white p-12 rounded-2xl shadow-xl text-center max-w-2xl w-full flex flex-col items-center">
           <div className="mb-8">
-            <img src={LOGO_URL} alt="Petacorp Logo" className="h-12 object-contain mx-auto" />
+            <img src={COMPANY_LOGO_URL} alt="Petacorp Logo" className="h-12 object-contain mx-auto" />
           </div>
           <div className="bg-indigo-50 p-6 rounded-full inline-block mb-6">
             <FolderOpen className="w-16 h-16 text-indigo-600" />
@@ -711,7 +709,7 @@ const App: React.FC = () => {
       <header className="bg-white border-b sticky top-0 z-10 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
           <div className="flex items-center gap-4 cursor-pointer" onClick={() => setAppState(AppState.HOME)} title="Voltar ao Início">
-            <img src={LOGO_URL} alt="Petacorp Logo" className="h-10 w-auto object-contain" />
+            <img src={COMPANY_LOGO_URL} alt="Petacorp Logo" className="h-10 w-auto object-contain" />
             <div className="h-8 w-px bg-gray-200 hidden sm:block"></div>
             <div>
               <h1 className="text-xl font-bold text-gray-900 hidden sm:block">AutoMail Dispatcher</h1>

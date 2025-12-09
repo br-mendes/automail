@@ -1,5 +1,6 @@
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenAI } from "@google/genai";
 import { EmailGenerationResponse } from "../types";
+import { COMPANY_LOGO_URL } from "../constants";
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
@@ -111,7 +112,7 @@ export const generateEmailContent = async (
   const preposition = determineArticle(recipientName); 
 
   const subject = `Relatório de ${reportType} - ${agencyName} - ${monthName}/${year}`;
-  const signatureUrl = "https://i.ibb.co/1Y4dQvpD/2-small.png";
+  const signatureUrl = COMPANY_LOGO_URL;
 
   // 4. Construct HTML Body (for internal use/future features)
   const bodyHtml = `
@@ -124,7 +125,7 @@ export const generateEmailContent = async (
       <br>
       <p>Atenciosamente,</p>
       <br>
-      <img src="${signatureUrl}" alt="Assinatura Petacorp" style="max-width: 100%; height: auto;" />
+      <img src="${signatureUrl}" alt="Logo Petacorp" style="max-width: 200px; height: auto;" />
       <br>
       <a href="${signatureUrl}">${signatureUrl}</a>
     </div>

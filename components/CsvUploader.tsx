@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import Papa from 'papaparse';
 import { Recipient } from '../types';
 import { Upload, FileText, AlertCircle } from 'lucide-react';
+import { COMPANY_LOGO_URL } from '../constants';
 
 interface CsvUploaderProps {
   onDataLoaded: (data: Recipient[]) => void;
@@ -60,7 +61,7 @@ export const CsvUploader: React.FC<CsvUploaderProps> = ({ onDataLoaded }) => {
     <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4">
       <div className="flex flex-col items-center justify-center p-12 bg-white rounded-2xl shadow-xl border border-gray-100 max-w-lg w-full">
         <img 
-          src="https://i.ibb.co/1Y4dQvpD/2-small.png" 
+          src={COMPANY_LOGO_URL}
           alt="Petacorp Logo" 
           className="h-12 mb-6 object-contain"
         />
