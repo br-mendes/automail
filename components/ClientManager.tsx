@@ -24,9 +24,13 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ clients, onUpdateC
   const handleAdd = () => {
     if (!newClient.sigla || !newClient.name || !newClient.email) return;
 
+    // Sanitize manual input as well
+    const sanitizedEmail = newClient.email.replace(/;/g, ',').trim();
+
     const client: Client = {
       id: Date.now().toString(),
-      ...newClient
+      ...newClient,
+      email: sanitizedEmail
     };
 
     onUpdateClients([...clients, client]);
@@ -93,11 +97,14 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ clients, onUpdateC
             const email = getVal('email') || getVal('e-mail');
 
             if (sigla && name && email) {
+                // Sanitize emails: Replace semicolons with commas for standard mailto compatibility
+                const sanitizedEmail = email.toString().replace(/;/g, ',').trim();
+
                 validClients.push({
                     id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
                     sigla: sigla.toString().trim(),
                     name: name.toString().trim(),
-                    email: email.toString().trim()
+                    email: sanitizedEmail
                 });
             }
         });
@@ -227,7 +234,7 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ clients, onUpdateC
                     <label className="block text-xs font-medium text-gray-700 mb-1">E-mails (Destinatários)</label>
                     <input 
                         type="text" 
-                        placeholder="nome@exemplo.com"
+                        placeholder="nome@exemplo.com; outro@exemplo.com"
                         value={newClient.email}
                         onChange={e => setNewClient({...newClient, email: e.target.value})}
                         className="w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2 border text-sm"

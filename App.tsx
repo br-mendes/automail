@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { FolderOpen, RefreshCw, Send, CheckCircle, Clock, File as FileIcon, Search, AlertTriangle, RotateCcw, Zap, Settings, X, CalendarClock, Timer, Users, Mail, ArrowLeft, LayoutDashboard } from 'lucide-react';
+import { FolderOpen, RefreshCw, Send, CheckCircle, Clock, File as FileIcon, Search, AlertTriangle, RotateCcw, Zap, Settings, X, CalendarClock, Timer, Users, Mail, ArrowLeft, LayoutDashboard, History, ChevronRight } from 'lucide-react';
 import { AppState, Client, Recipient, FileEntry, AutoScanConfig } from './types';
 import { ClientManager } from './components/ClientManager';
 import { generateEmailContent, findKeywordMatch } from './services/geminiService';
@@ -21,6 +21,7 @@ const App: React.FC = () => {
 
   // File System
   const [dirHandle, setDirHandle] = useState<FileSystemDirectoryHandle | null>(null);
+  const [folderHistory, setFolderHistory] = useState<FileSystemDirectoryHandle[]>([]);
   const [files, setFiles] = useState<FileEntry[]>([]);
   const [isScanning, setIsScanning] = useState(false);
   const [lastScanTime, setLastScanTime] = useState<Date | null>(null);
@@ -75,19 +76,7 @@ const App: React.FC = () => {
     });
   }, [clients]);
 
-  // 4. Handle Folder Selection
-  const handleSelectFolder = async () => {
-    try {
-      const handle = await (window as any).showDirectoryPicker();
-      setDirHandle(handle);
-      setAppState(AppState.DASHBOARD);
-      await scanDirectory(handle);
-    } catch (err) {
-      console.error("Folder access denied or cancelled", err);
-    }
-  };
-
-  // 5. Scan Logic
+  // 5. Scan Logic (Defined before handleSelectFolder to be used inside it if needed, or via effect)
   const scanDirectory = useCallback(async (handle: FileSystemDirectoryHandle) => {
     setIsScanning(true);
     const newFiles: FileEntry[] = [];
@@ -103,10 +92,38 @@ const App: React.FC = () => {
       setLastScanTime(new Date());
     } catch (e) {
       console.error("Error scanning directory", e);
+      alert("Erro ao ler a pasta. Pode ser necessário selecioná-la novamente para renovar a permissão.");
     } finally {
       setIsScanning(false);
     }
   }, []);
+
+  // 4. Handle Folder Selection
+  const handleSelectFolder = async () => {
+    try {
+      const handle = await (window as any).showDirectoryPicker();
+      
+      // Update History
+      setFolderHistory(prev => {
+        // Avoid duplicates by name (simple check)
+        if (prev.some(h => h.name === handle.name)) return prev;
+        return [...prev, handle];
+      });
+
+      setDirHandle(handle);
+      setAppState(AppState.DASHBOARD);
+      await scanDirectory(handle);
+    } catch (err) {
+      console.error("Folder access denied or cancelled", err);
+    }
+  };
+
+  const handleHistorySelect = async (handle: FileSystemDirectoryHandle) => {
+      setDirHandle(handle);
+      setAppState(AppState.DASHBOARD);
+      await scanDirectory(handle);
+  };
+
 
   // 6. Auto-Scan Heartbeat
   useEffect(() => {
@@ -257,17 +274,24 @@ const App: React.FC = () => {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 flex flex-col items-center justify-center p-4">
         <div className="max-w-4xl w-full bg-white rounded-2xl shadow-xl overflow-hidden flex flex-col md:flex-row min-h-[500px]">
-            {/* Left/Top Branding Side */}
-            <div className="bg-gradient-to-br from-blue-700 to-indigo-800 p-12 text-white flex flex-col justify-center items-center md:items-start md:w-5/12 text-center md:text-left">
-                 <div className="bg-white/10 p-4 rounded-2xl mb-8 backdrop-blur-sm">
+            {/* Left/Top Branding Side - Gradient Black to Blue */}
+            <div className="bg-gradient-to-br from-gray-900 to-blue-900 p-12 flex flex-col justify-center items-center md:items-start md:w-5/12 text-center md:text-left text-white border-r border-gray-800">
+                 <div className="bg-white p-4 rounded-2xl mb-8 shadow-lg shadow-black/20">
                     <img src={LOGO_URL} alt="Petacorp" className="h-16 w-auto object-contain" />
                  </div>
                  <h1 className="text-3xl font-bold mb-4 leading-tight">AutoMail Dispatcher</h1>
-                 <p className="text-blue-100 text-lg mb-8 leading-relaxed">
+                 <p className="text-blue-100/90 text-lg mb-8 leading-relaxed">
                     Automação inteligente de e-mails corporativos com reconhecimento de arquivos via IA.
                  </p>
-                 <div className="mt-auto text-xs text-blue-200 opacity-60">
-                    Versão 2.5 • Petacorp
+                 <div className="mt-auto text-xs text-blue-200/60">
+                    <a 
+                        href="https://petacorp.com.br" 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        className="hover:text-white transition-colors border-b border-transparent hover:border-white pb-0.5"
+                    >
+                        Versão 2.6 • Petacorp
+                    </a>
                  </div>
             </div>
             
@@ -342,13 +366,24 @@ const App: React.FC = () => {
           <p className="text-gray-600 mb-8 max-w-md mx-auto">
             Escolha a pasta local onde os anexos (PDFs, Docs) estão salvos para iniciar a varredura automática.
           </p>
+
+          <div className="bg-blue-50 border border-blue-100 rounded-lg p-4 mb-8 text-left w-full">
+            <h4 className="text-blue-800 font-semibold text-sm mb-2 flex items-center gap-2">
+                <LayoutDashboard className="w-4 h-4" />
+                Integração SharePoint / OneDrive
+            </h4>
+            <p className="text-xs text-blue-700 leading-relaxed">
+                Para monitorar arquivos em nuvem, certifique-se de que a pasta está sincronizada com seu computador via 
+                <strong> OneDrive</strong>. Navegue até a pasta do SharePoint no Windows Explorer (geralmente sob o ícone da empresa) e selecione-a aqui.
+            </p>
+          </div>
           
           <button 
             onClick={handleSelectFolder}
             className="px-8 py-4 bg-indigo-600 text-white rounded-xl font-semibold hover:bg-indigo-700 transition shadow-lg hover:shadow-xl hover:-translate-y-0.5 flex items-center gap-3 w-full sm:w-auto justify-center"
           >
             <FolderOpen className="w-5 h-5" />
-            Escolher Pasta
+            Nova Pasta
           </button>
 
            <button 
@@ -358,6 +393,35 @@ const App: React.FC = () => {
             <Users className="w-4 h-4" />
             Precisa editar clientes antes?
           </button>
+
+          {/* FOLDER HISTORY */}
+          {folderHistory.length > 0 && (
+            <div className="mt-10 pt-8 border-t w-full">
+                <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-4 text-left flex items-center gap-2">
+                    <History className="w-4 h-4" />
+                    Histórico de Sessão
+                </h3>
+                <div className="space-y-3">
+                    {folderHistory.map((handle, idx) => (
+                        <button
+                            key={idx}
+                            onClick={() => handleHistorySelect(handle)}
+                            className="w-full flex items-center justify-between p-4 bg-gray-50 hover:bg-white border border-transparent hover:border-indigo-200 hover:shadow-md rounded-xl transition-all group"
+                        >
+                            <div className="flex items-center gap-3 text-left overflow-hidden">
+                                <div className="bg-white p-2 rounded-lg border shadow-sm group-hover:border-indigo-100">
+                                    <FolderOpen className="w-5 h-5 text-indigo-500" />
+                                </div>
+                                <span className="font-medium text-gray-700 truncate group-hover:text-indigo-700">
+                                    {handle.name}
+                                </span>
+                            </div>
+                            <ChevronRight className="w-4 h-4 text-gray-400 group-hover:text-indigo-500" />
+                        </button>
+                    ))}
+                </div>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -481,12 +545,12 @@ const App: React.FC = () => {
       {/* Header */}
       <header className="bg-white border-b sticky top-0 z-10 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-4 cursor-pointer" onClick={() => setAppState(AppState.HOME)} title="Voltar ao Início">
             <img src={LOGO_URL} alt="Petacorp Logo" className="h-10 w-auto object-contain" />
             <div className="h-8 w-px bg-gray-200 hidden sm:block"></div>
             <div>
               <h1 className="text-xl font-bold text-gray-900 hidden sm:block">AutoMail Dispatcher</h1>
-              <p className="text-xs text-gray-500 hidden sm:block">Monitorando: {dirHandle?.name || '...'}</p>
+              <p className="text-xs text-gray-500 hidden sm:block">Monitorando: <span className="font-semibold text-indigo-600">{dirHandle?.name || '...'}</span></p>
             </div>
           </div>
           
@@ -508,6 +572,14 @@ const App: React.FC = () => {
              </div>
 
              <div className="flex items-center gap-2 border-l pl-4 ml-2">
+                <button 
+                    onClick={() => setAppState(AppState.SELECT_FOLDER)}
+                    className="p-2 rounded-full hover:bg-indigo-50 text-indigo-600 transition"
+                    title="Trocar Pasta"
+                >
+                    <FolderOpen className="w-5 h-5" />
+                </button>
+
                 <button 
                     onClick={() => setAppState(AppState.HOME)}
                     className="p-2 rounded-full hover:bg-gray-100 text-gray-600 transition"
