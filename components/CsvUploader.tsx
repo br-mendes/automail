@@ -53,42 +53,44 @@ export const CsvUploader: React.FC<CsvUploaderProps> = ({ onDataLoaded }) => {
   };
 
   return (
-    <div className="flex flex-col items-center justify-center p-12 bg-white rounded-2xl shadow-xl border border-gray-100 max-w-lg mx-auto mt-20">
-      <img 
-        src="https://1drv.ms/i/c/9001c56eb955c86d/IQR6eojwjvGgSYkp266gHvyqAawCgXODNSK6ct0fNeb6GVQ" 
-        alt="Petacorp Logo" 
-        className="h-12 mb-6 object-contain"
-      />
-      <div className="bg-blue-50 p-4 rounded-full mb-6">
-        <FileText className="w-12 h-12 text-blue-600" />
-      </div>
-      <h2 className="text-2xl font-bold text-gray-800 mb-2">Carregar Planilha</h2>
-      <p className="text-gray-500 text-center mb-8">
-        Faça upload do arquivo CSV contendo os nomes, órgãos e e-mails dos destinatários.
-      </p>
-
-      <label className="relative cursor-pointer group">
-        <div className="flex items-center gap-3 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors shadow-lg shadow-blue-200">
-          <Upload className="w-5 h-5" />
-          <span className="font-medium">Selecionar Arquivo CSV</span>
-        </div>
-        <input 
-          type="file" 
-          accept=".csv" 
-          onChange={handleFileUpload} 
-          className="hidden" 
+    <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4">
+      <div className="flex flex-col items-center justify-center p-12 bg-white rounded-2xl shadow-xl border border-gray-100 max-w-lg w-full">
+        <img 
+          src="https://1drv.ms/i/c/9001c56eb955c86d/IQR6eojwjvGgSYkp266gHvyqAawCgXODNSK6ct0fNeb6GVQ" 
+          alt="Petacorp Logo" 
+          className="h-12 mb-6 object-contain"
         />
-      </label>
-
-      {error && (
-        <div className="mt-6 flex items-center gap-2 text-red-600 bg-red-50 px-4 py-2 rounded-lg text-sm">
-          <AlertCircle className="w-4 h-4" />
-          {error}
+        <div className="bg-blue-50 p-4 rounded-full mb-6">
+          <FileText className="w-12 h-12 text-blue-600" />
         </div>
-      )}
-      
-      <div className="mt-8 text-xs text-gray-400 border-t pt-4 w-full text-center">
-        Colunas esperadas: <strong>Nome, Orgao, Email</strong>
+        <h2 className="text-2xl font-bold text-gray-800 mb-2">Carregar Planilha</h2>
+        <p className="text-gray-500 text-center mb-8">
+          Faça upload do arquivo CSV contendo os nomes, órgãos e e-mails dos destinatários.
+        </p>
+
+        <label className="relative cursor-pointer group w-full flex justify-center">
+          <div className="flex items-center justify-center gap-3 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors shadow-lg shadow-blue-200 w-full sm:w-auto">
+            <Upload className="w-5 h-5" />
+            <span className="font-medium">Selecionar Arquivo CSV</span>
+          </div>
+          <input 
+            type="file" 
+            accept=".csv" 
+            onChange={handleFileUpload} 
+            className="hidden" 
+          />
+        </label>
+
+        {error && (
+          <div className="mt-6 flex items-center gap-2 text-red-600 bg-red-50 px-4 py-2 rounded-lg text-sm w-full justify-center">
+            <AlertCircle className="w-4 h-4 shrink-0" />
+            {error}
+          </div>
+        )}
+        
+        <div className="mt-8 text-xs text-gray-400 border-t pt-4 w-full text-center">
+          Colunas esperadas: <strong>Nome, Orgao, Email</strong>
+        </div>
       </div>
     </div>
   );
