@@ -15,13 +15,20 @@ export interface Client {
   name: string; // Ex: Justiça Federal de Alagoas (Used for Email Body)
   email: string; // To recipients
   services: string[]; // List of services enabled for this client
+  notes?: string; // Optional remarks
+}
+
+export interface User {
+  username: string;
+  displayName: string;
+  isAuthenticated: boolean;
 }
 
 export interface Recipient extends Client {
   status: 'pending' | 'file_found' | 'ready' | 'sent';
   // matchedFileName is deprecated in favor of matchedFiles for multi-service support
   matchedFileName?: string; 
-  matchedFiles?: { service: string, fileName: string }[]; // New: Track files per service
+  matchedFiles?: { service: string, fileName: string, timestamp?: number }[]; // Updated: Add timestamp
   missingServices?: string[]; // New: Track which services are missing files
   matchedTime?: Date; // Timestamp when the file was identified
   emailSubject?: string;
@@ -35,6 +42,7 @@ export interface Recipient extends Client {
 export interface FileEntry {
   name: string;
   handle: FileSystemFileHandle | File; // Support standard File object for fallback
+  timestamp?: number; // Cache timestamp
 }
 
 export enum AppState {

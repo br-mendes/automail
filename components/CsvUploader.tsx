@@ -45,7 +45,10 @@ export const CsvUploader: React.FC<CsvUploaderProps> = ({ onDataLoaded }) => {
             sigla: agency,
             email: row['Email'] || row['email'] || row['E-mail'] || '',
             status: 'pending' as const,
-            services: services
+            services: services,
+            matchedFiles: [], // Initialize empty
+            missingServices: [], // Initialize empty
+            notes: row['Observacoes'] || row['observacoes'] || ''
           };
         }).filter(r => r.email && r.name !== 'Desconhecido');
 

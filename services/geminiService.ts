@@ -172,14 +172,20 @@ ${signatureUrl}`;
   } else {
     // --- GENERAL LOGIC ---
     
+    // Determine singular/plural
+    const isPlural = services.length > 1;
+    const reportWord = isPlural ? "Relatórios" : "Relatório";
+    const referenceWord = isPlural ? "referentes" : "referente";
+    const articleWord = isPlural ? "os relatórios" : "o relatório";
+
     // Subject: [SIGLA] | Relatório(s) [SERVIÇOS] - [MÊS/ANO]
     const monthYear = `${monthName.charAt(0).toUpperCase() + monthName.slice(1)}/${year}`;
-    subject = `${agencySigla} | Relatório(s) ${servicesStr} - ${monthYear}`;
+    subject = `${agencySigla} | ${reportWord} ${servicesStr} - ${monthYear}`;
 
     const preposition = determineArticle(recipientName);
 
     // Body: Encaminhamos...
-    const bodyContent = `Encaminhamos, em anexo, o relatório de ${servicesStr} referente ao mês de ${monthName} de ${year}.
+    const bodyContent = `Encaminhamos, em anexo, ${articleWord} de ${servicesStr} ${referenceWord} ao mês de ${monthName} de ${year}.
 
 Colocamo-nos à disposição para quaisquer esclarecimentos que se fizerem necessários.`;
 

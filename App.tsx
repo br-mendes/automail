@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { FolderOpen, RefreshCw, Send, CheckCircle, Clock, File as FileIcon, Search, AlertTriangle, RotateCcw, Zap, Settings, X, CalendarClock, Timer, Users, Mail, ArrowLeft, LayoutDashboard, History, ChevronRight, Filter, MonitorPlay, Trash2, XCircle } from 'lucide-react';
+import { FolderOpen, RefreshCw, Send, CheckCircle, Clock, File as FileIcon, Search, AlertTriangle, RotateCcw, Zap, Settings, X, CalendarClock, Timer, Users, Mail, ArrowLeft, LayoutDashboard, History, ChevronRight, Filter, MonitorPlay, Trash2, XCircle, ArrowUp } from 'lucide-react';
 import { AppState, Client, Recipient, FileEntry, AutoScanConfig, SentLog, DashboardTab } from './types';
 import { ClientManager } from './components/ClientManager';
 import { generateEmailContent, findKeywordMatch } from './services/geminiService';
@@ -29,8 +29,29 @@ const App: React.FC = () => {
   const [lastScanTime, setLastScanTime] = useState<Date | null>(null);
   
   const lastAutoScanRef = useRef<number>(0);
+  const lastScanSignatureRef = useRef<string>(''); // Cache signature
+  
   // Fallback file input ref
   const fallbackFileInputRef = useRef<HTMLInputElement>(null);
+
+  // Scroll To Top Logic
+  const [showScrollTop, setShowScrollTop] = useState(false);
+
+  useEffect(() => {
+    const handleScroll = () => {
+        if (window.scrollY > 300) {
+            setShowScrollTop(true);
+        } else {
+            setShowScrollTop(false);
+        }
+    };
+    window.addEventListener('scroll', handleScroll);
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  const scrollToTop = () => {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
 
   // Helper to normalize clients by merging same Sigla
   const normalizeAndMergeClients = (clientList: Client[]): Client[] => {
@@ -47,9 +68,9 @@ const App: React.FC = () => {
               const newServices = c.services || [];
               const uniqueServices = Array.from(new Set([...existingServices, ...newServices]));
 
-              map.set(key, { ...existing, email: uniqueEmails, services: uniqueServices });
+              map.set(key, { ...existing, email: uniqueEmails, services: uniqueServices, notes: c.notes || existing.notes });
           } else {
-              map.set(key, { ...c, email: c.email.replace(/,/g, ';'), services: c.services || [] });
+              map.set(key, { ...c, email: c.email.replace(/,/g, ';'), services: c.services || [], notes: c.notes || '' });
           }
       });
       return Array.from(map.values());
@@ -126,6 +147,7 @@ const App: React.FC = () => {
                 emailBodyHtml: existing ? existing.emailBodyHtml : undefined,
                 overrideTo: existing ? existing.overrideTo : undefined,
                 overrideCc: existing ? existing.overrideCc : undefined,
+                notes: client.notes // Ensure notes are passed
             };
         });
     });
@@ -143,6 +165,20 @@ const App: React.FC = () => {
           newFiles.push({ name: entry.name, handle: entry as FileSystemFileHandle });
         }
       }
+
+      // --- Cache Optimization ---
+      // Generate a signature based on sorted filenames
+      const currentSignature = newFiles.map(f => f.name).sort().join('|');
+      
+      if (currentSignature === lastScanSignatureRef.current) {
+          // No changes in file structure, skip updates
+          setLastScanTime(new Date());
+          setIsScanning(false);
+          return;
+      }
+
+      // Update cache
+      lastScanSignatureRef.current = currentSignature;
       setFiles(newFiles);
       setLastScanTime(new Date());
     } catch (e) {
@@ -157,7 +193,12 @@ const App: React.FC = () => {
   const handleFallbackFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
       if (event.target.files) {
           const fileList = Array.from(event.target.files);
-          const newFiles: FileEntry[] = fileList.map(f => ({ name: f.name, handle: f }));
+          const newFiles: FileEntry[] = fileList.map(f => ({ name: f.name, handle: f, timestamp: f.lastModified }));
+          
+          // Generate signature for fallback as well
+          const signature = newFiles.map(f => f.name).sort().join('|');
+          lastScanSignatureRef.current = signature;
+
           setFiles(newFiles);
           setLastScanTime(new Date());
           
@@ -177,6 +218,9 @@ const App: React.FC = () => {
         return [...prev, handle];
       });
 
+      // Reset cache when switching folders
+      lastScanSignatureRef.current = '';
+
       setDirHandle(handle);
       setAppState(AppState.DASHBOARD);
       await scanDirectory(handle);
@@ -189,6 +233,10 @@ const App: React.FC = () => {
   };
 
   const handleHistorySelect = async (handle: FileSystemDirectoryHandle) => {
+      // Reset cache when switching folders via history
+      if (dirHandle?.name !== handle.name) {
+          lastScanSignatureRef.current = '';
+      }
       setDirHandle(handle);
       setAppState(AppState.DASHBOARD);
       await scanDirectory(handle);
@@ -288,15 +336,36 @@ const App: React.FC = () => {
         // Determine if CAIXA
         const isCaixa = r.sigla.toLowerCase().includes('caixa') || r.sigla.toLowerCase().includes('jamc') || r.name.toLowerCase().includes('caixa');
         
-        const matchedFiles: { service: string, fileName: string }[] = [];
+        const matchedFiles: { service: string, fileName: string, timestamp?: number }[] = [];
         const missingServices: string[] = [];
 
+        // Helper to find file entry and get timestamp
+        const getFileTimestamp = async (fileName: string): Promise<number | undefined> => {
+            const entry = files.find(f => f.name === fileName);
+            if (!entry) return undefined;
+            
+            // Check if we already have a cached timestamp (from fallback)
+            if (entry.timestamp) return entry.timestamp;
+
+            try {
+                if (entry.handle instanceof File) {
+                    return entry.handle.lastModified;
+                } else {
+                    // It's a FileSystemFileHandle
+                    const fileObj = await (entry.handle as FileSystemFileHandle).getFile();
+                    return fileObj.lastModified;
+                }
+            } catch (e) {
+                return undefined;
+            }
+        };
+
         if (isCaixa) {
-            // CAIXA Rule: Strictly match JAMC_15762_2020 regardless of service count
-            // We treat it as one 'monolithic' report
+            // CAIXA Rule: Strictly match JAMC_15762_2020
             const match = findKeywordMatch(r.name, r.sigla, "", fileNames);
             if (match) {
-                matchedFiles.push({ service: "Relatório CAIXA (JAMC)", fileName: match });
+                const ts = await getFileTimestamp(match);
+                matchedFiles.push({ service: "Relatório CAIXA (JAMC)", fileName: match, timestamp: ts });
             } else {
                 missingServices.push("Relatório JAMC");
             }
@@ -305,33 +374,34 @@ const App: React.FC = () => {
             const servicesToCheck = (r.services && r.services.length > 0) ? r.services : [];
             
             if (servicesToCheck.length === 0) {
-                 // Flag as empty configuration - cannot be ready
+                 // Flag as empty configuration
             } else {
-                servicesToCheck.forEach(service => {
+                // Iterate carefully with async/await
+                for (const service of servicesToCheck) {
                     const match = findKeywordMatch(r.name, r.sigla, service, fileNames);
                     if (match) {
-                        matchedFiles.push({ service, fileName: match });
+                        const ts = await getFileTimestamp(match);
+                        matchedFiles.push({ service, fileName: match, timestamp: ts });
                     } else {
                         missingServices.push(service);
                     }
-                });
+                }
             }
         }
 
         // Determine Status
-        // For General: Ready ONLY if services are defined AND ALL missing services are 0 AND match count > 0
         const servicesConfigured = isCaixa || (r.services && r.services.length > 0);
         const allFound = servicesConfigured && missingServices.length === 0 && matchedFiles.length > 0;
         
         let newStatus = r.status;
         
         if (allFound) {
-            newStatus = r.status === 'ready' ? 'ready' : 'file_found'; // file_found triggers generation
+            newStatus = r.status === 'ready' ? 'ready' : 'file_found';
         } else {
             newStatus = 'pending';
         }
 
-        // Only update if something changed
+        // Deep Compare for changes
         const prevFiles = JSON.stringify(r.matchedFiles || []);
         const newFilesStr = JSON.stringify(matchedFiles);
         const prevMissing = JSON.stringify(r.missingServices || []);
@@ -356,7 +426,7 @@ const App: React.FC = () => {
 
     processMatches();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [files]); 
+  }, [files]); // Dependency on 'files' ensures it runs only when file list changes (filtered by cache)
 
   // 8. Generate Email Content
   useEffect(() => {
@@ -373,7 +443,7 @@ const App: React.FC = () => {
         const index = updatedRecipients.findIndex(r => r.id === target.id);
         if (index === -1) return;
 
-        // Use the first matched file name for reference, or a placeholder if multiple
+        // Use the first matched file name for reference
         const primaryFile = target.matchedFiles && target.matchedFiles.length > 0 ? target.matchedFiles[0].fileName : '';
         
         const content = await generateEmailContent(target.name, target.sigla, primaryFile, target.services);
@@ -486,7 +556,17 @@ const App: React.FC = () => {
   // 1. HOME SCREEN
   if (appState === AppState.HOME) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 flex flex-col items-center justify-center p-4">
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 flex flex-col items-center justify-center p-4 relative">
+        {showScrollTop && (
+            <button 
+                onClick={scrollToTop}
+                className="fixed bottom-6 right-6 p-3 bg-blue-600 text-white rounded-full shadow-xl hover:bg-blue-700 transition z-50 animate-bounce-subtle"
+                title="Voltar ao topo"
+            >
+                <ArrowUp className="w-5 h-5" />
+            </button>
+        )}
+
         <div className="max-w-4xl w-full bg-white rounded-2xl shadow-xl overflow-hidden flex flex-col md:flex-row min-h-[500px]">
             {/* Left/Top Branding Side */}
             <div className="bg-gradient-to-br from-gray-900 to-blue-900 p-12 flex flex-col justify-center items-center md:items-start md:w-5/12 text-center md:text-left text-white border-r border-gray-800">
@@ -516,27 +596,31 @@ const App: React.FC = () => {
 
                 <button 
                     onClick={() => setAppState(AppState.MANAGE_CLIENTS)}
-                    className="group flex items-start gap-5 p-6 rounded-2xl border border-gray-100 hover:border-blue-500/30 hover:bg-blue-50/50 transition-all text-left shadow-sm hover:shadow-md"
+                    className="group flex items-start gap-5 p-6 rounded-2xl border border-gray-100 hover:border-blue-500/30 hover:bg-blue-50/50 transition-all text-left shadow-sm hover:shadow-md relative overflow-hidden"
                 >
-                    <div className="bg-blue-100 p-3.5 rounded-xl group-hover:bg-blue-600 group-hover:scale-110 transition-all duration-300">
+                    <div className="p-3.5 rounded-xl transition-all duration-300 bg-blue-100 group-hover:bg-blue-600 group-hover:scale-110">
                         <Users className="w-6 h-6 text-blue-600 group-hover:text-white" />
                     </div>
                     <div>
-                        <h3 className="font-bold text-gray-900 text-lg group-hover:text-blue-700 transition-colors">Gerenciar Clientes</h3>
-                        <p className="text-sm text-gray-500 mt-1">Cadastre, importe ou edite a lista de destinatários.</p>
+                        <h3 className="font-bold text-lg transition-colors text-gray-900 group-hover:text-blue-700">Gerenciar Clientes</h3>
+                        <p className="text-sm text-gray-500 mt-1">
+                            Cadastre, importe ou edite a lista de destinatários.
+                        </p>
                     </div>
                 </button>
 
                 <button 
                     onClick={() => setAppState(AppState.SELECT_FOLDER)}
-                    className="group flex items-start gap-5 p-6 rounded-2xl border border-gray-100 hover:border-indigo-500/30 hover:bg-indigo-50/50 transition-all text-left shadow-sm hover:shadow-md"
+                    className="group flex items-start gap-5 p-6 rounded-2xl border border-gray-100 hover:border-indigo-500/30 hover:bg-indigo-50/50 transition-all text-left shadow-sm hover:shadow-md relative overflow-hidden"
                 >
-                    <div className="bg-indigo-100 p-3.5 rounded-xl group-hover:bg-indigo-600 group-hover:scale-110 transition-all duration-300">
+                    <div className="p-3.5 rounded-xl transition-all duration-300 bg-indigo-100 group-hover:bg-indigo-600 group-hover:scale-110">
                         <LayoutDashboard className="w-6 h-6 text-indigo-600 group-hover:text-white" />
                     </div>
                     <div>
-                        <h3 className="font-bold text-gray-900 text-lg group-hover:text-indigo-700 transition-colors">Monitorar Arquivos</h3>
-                        <p className="text-sm text-gray-500 mt-1">Selecione a pasta de arquivos locais e inicie os disparos.</p>
+                        <h3 className="font-bold text-lg transition-colors text-gray-900 group-hover:text-indigo-700">Monitorar Arquivos</h3>
+                        <p className="text-sm text-gray-500 mt-1">
+                            Selecione a pasta de arquivos locais e inicie os disparos.
+                        </p>
                     </div>
                 </button>
             </div>
@@ -548,12 +632,23 @@ const App: React.FC = () => {
   // 2. CLIENT MANAGER
   if (appState === AppState.MANAGE_CLIENTS) {
     return (
-        <ClientManager 
-            clients={clients} 
-            onUpdateClients={setClients} 
-            onNext={() => setAppState(AppState.SELECT_FOLDER)} 
-            onBack={() => setAppState(AppState.HOME)}
-        />
+        <div className="relative">
+            <ClientManager 
+                clients={clients} 
+                onUpdateClients={setClients} 
+                onNext={() => setAppState(AppState.SELECT_FOLDER)} // Updated to direct navigation
+                onBack={() => setAppState(AppState.HOME)}
+            />
+            {showScrollTop && (
+                <button 
+                    onClick={scrollToTop}
+                    className="fixed bottom-6 right-6 p-3 bg-blue-600 text-white rounded-full shadow-xl hover:bg-blue-700 transition z-50 animate-bounce-subtle"
+                    title="Voltar ao topo"
+                >
+                    <ArrowUp className="w-5 h-5" />
+                </button>
+            )}
+        </div>
     );
   }
 
@@ -561,6 +656,15 @@ const App: React.FC = () => {
   if (appState === AppState.SELECT_FOLDER) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 relative p-4">
+        {showScrollTop && (
+            <button 
+                onClick={scrollToTop}
+                className="fixed bottom-6 right-6 p-3 bg-blue-600 text-white rounded-full shadow-xl hover:bg-blue-700 transition z-50 animate-bounce-subtle"
+                title="Voltar ao topo"
+            >
+                <ArrowUp className="w-5 h-5" />
+            </button>
+        )}
         <button 
             onClick={() => setAppState(AppState.HOME)}
             className="absolute top-6 left-6 flex items-center gap-2 text-gray-500 hover:text-gray-800 transition px-4 py-2 rounded-full hover:bg-white/80"
@@ -653,6 +757,16 @@ const App: React.FC = () => {
   // 4. DASHBOARD (DEFAULT)
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col relative">
+      {showScrollTop && (
+        <button 
+            onClick={scrollToTop}
+            className="fixed bottom-6 right-6 p-3 bg-blue-600 text-white rounded-full shadow-xl hover:bg-blue-700 transition z-50 animate-bounce-subtle"
+            title="Voltar ao topo"
+        >
+            <ArrowUp className="w-5 h-5" />
+        </button>
+      )}
+      
       {/* Settings Modal */}
       {showSettings && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
@@ -983,14 +1097,14 @@ const App: React.FC = () => {
                                 const isCaixa = recipient.sigla.toLowerCase().includes('caixa') || recipient.sigla.toLowerCase().includes('jamc');
                                 return (
                                 <tr key={recipient.id} className="hover:bg-gray-50 transition-colors">
-                                    <td className="px-6 py-4">
+                                    <td className="px-6 py-4 w-1/4">
                                         <div className="text-lg font-bold text-gray-900">{recipient.sigla}</div>
                                         <div className="text-xs text-gray-500 mt-0.5">{recipient.name}</div>
                                         <div className="text-xs text-gray-400 mt-1 max-w-xs truncate" title={recipient.email}>
                                             {recipient.email}
                                         </div>
                                     </td>
-                                    <td className="px-6 py-4">
+                                    <td className="px-6 py-4 w-1/6">
                                         {recipient.status === 'pending' && (
                                             <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-red-100 text-red-800 border border-red-200">
                                                 <Search className="w-3 h-3" /> Aguardando Arquivo
@@ -1012,22 +1126,31 @@ const App: React.FC = () => {
                                             </span>
                                         )}
                                     </td>
-                                    <td className="px-6 py-4">
+                                    <td className="px-6 py-4 w-1/3">
                                         {/* File Matches Visuals */}
-                                        <div className="space-y-2">
+                                        <div className="space-y-4">
                                             {isCaixa ? (
                                                 // CAIXA View
-                                                <div className="flex items-center gap-2 text-sm">
-                                                    {recipient.matchedFiles?.some(f => f.service.includes('JAMC')) ? (
-                                                        <CheckCircle className="w-4 h-4 text-green-500 shrink-0" />
-                                                    ) : (
-                                                        <XCircle className="w-4 h-4 text-red-500 shrink-0" />
-                                                    )}
-                                                    <span className="text-xs font-medium text-gray-700">Relatório JAMC</span>
+                                                <div className="text-sm">
+                                                    <div className="flex items-center gap-2 mb-2">
+                                                        {recipient.matchedFiles?.some(f => f.service.includes('JAMC')) ? (
+                                                            <CheckCircle className="w-4 h-4 text-green-500 shrink-0" />
+                                                        ) : (
+                                                            <XCircle className="w-4 h-4 text-red-500 shrink-0" />
+                                                        )}
+                                                        <span className="font-bold text-gray-700">Relatório JAMC</span>
+                                                    </div>
                                                     {recipient.matchedFiles?.find(f => f.service.includes('JAMC')) && (
-                                                        <span className="font-mono text-[10px] text-gray-500 bg-gray-100 px-1 rounded ml-auto">
-                                                            {recipient.matchedFiles.find(f => f.service.includes('JAMC'))?.fileName}
-                                                        </span>
+                                                        <div className="pl-6 border-l-2 border-green-100 ml-2">
+                                                            <div className="font-mono text-xs text-gray-700 break-all bg-gray-50 p-1.5 rounded border border-gray-100 block w-full">
+                                                                {recipient.matchedFiles.find(f => f.service.includes('JAMC'))?.fileName}
+                                                            </div>
+                                                            {recipient.matchedFiles.find(f => f.service.includes('JAMC'))?.timestamp && (
+                                                                <div className="text-[10px] text-gray-400 mt-1">
+                                                                    Criado em: {new Date(recipient.matchedFiles.find(f => f.service.includes('JAMC'))!.timestamp!).toLocaleString()}
+                                                                </div>
+                                                            )}
+                                                        </div>
                                                     )}
                                                 </div>
                                             ) : (
@@ -1036,17 +1159,26 @@ const App: React.FC = () => {
                                                     recipient.services.map((service, idx) => {
                                                         const match = recipient.matchedFiles?.find(f => f.service === service);
                                                         return (
-                                                            <div key={idx} className="flex items-center gap-2 text-sm">
-                                                                {match ? (
-                                                                    <CheckCircle className="w-4 h-4 text-green-500 shrink-0" />
-                                                                ) : (
-                                                                    <XCircle className="w-4 h-4 text-red-500 shrink-0" />
-                                                                )}
-                                                                <span className="text-xs font-medium text-gray-700">{service}</span>
+                                                            <div key={idx} className="text-sm border-b border-gray-50 pb-2 last:border-0 last:pb-0">
+                                                                <div className="flex items-center gap-2 mb-1">
+                                                                    {match ? (
+                                                                        <CheckCircle className="w-4 h-4 text-green-500 shrink-0" />
+                                                                    ) : (
+                                                                        <XCircle className="w-4 h-4 text-red-500 shrink-0" />
+                                                                    )}
+                                                                    <span className="font-bold text-gray-700">{service}</span>
+                                                                </div>
                                                                 {match && (
-                                                                    <span className="font-mono text-[10px] text-gray-500 bg-gray-100 px-1 rounded ml-auto truncate max-w-[150px]">
-                                                                        {match.fileName}
-                                                                    </span>
+                                                                    <div className="pl-6 border-l-2 border-green-100 ml-2">
+                                                                        <div className="font-mono text-xs text-gray-700 break-all bg-gray-50 p-1.5 rounded border border-gray-100 block w-full">
+                                                                            {match.fileName}
+                                                                        </div>
+                                                                        {match.timestamp && (
+                                                                            <div className="text-[10px] text-gray-400 mt-1">
+                                                                                Criado em: {new Date(match.timestamp).toLocaleString()}
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
                                                                 )}
                                                             </div>
                                                         );
@@ -1058,14 +1190,8 @@ const App: React.FC = () => {
                                                 )
                                             )}
                                         </div>
-
-                                        {recipient.matchedTime && recipient.status !== 'pending' && (
-                                             <div className="text-[10px] text-gray-400 mt-2 border-t pt-1 w-fit">
-                                                 Atualizado: {recipient.matchedTime.toLocaleDateString()} às {recipient.matchedTime.toLocaleTimeString()}
-                                             </div>
-                                        )}
                                     </td>
-                                    <td className="px-6 py-4 text-right">
+                                    <td className="px-6 py-4 text-right w-1/6">
                                         {recipient.status === 'ready' ? (
                                             <button 
                                                 onClick={() => handleSend(recipient)}

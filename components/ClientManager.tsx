@@ -1,7 +1,7 @@
 
 import React, { useState, useRef, useMemo } from 'react';
 import { Client, AVAILABLE_SERVICES } from '../types';
-import { Plus, Trash2, Users, ArrowRight, Download, Upload, FileText, Search, ArrowLeft, Edit2, X, Save, CheckSquare, Square } from 'lucide-react';
+import { Plus, Trash2, Users, ArrowRight, Download, Upload, FileText, Search, ArrowLeft, Edit2, X, Save, CheckSquare, Square, Filter, FilePenLine } from 'lucide-react';
 import Papa from 'papaparse';
 
 interface ClientManagerProps {
@@ -16,10 +16,12 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ clients, onUpdateC
     sigla: '',
     name: '',
     email: '',
-    services: []
+    services: [],
+    notes: ''
   });
   const [editingId, setEditingId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [filterService, setFilterService] = useState<string>(''); // New: Service Filter
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -50,7 +52,8 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ clients, onUpdateC
                   ...existing, 
                   email: uniqueEmails, 
                   name: inc.name || existing.name,
-                  services: uniqueServices
+                  services: uniqueServices,
+                  notes: inc.notes || existing.notes // Prefer new notes if provided, else keep existing
               });
           } else {
               // Add new
@@ -59,12 +62,30 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ clients, onUpdateC
                   sigla: inc.sigla.trim(),
                   name: inc.name.trim(),
                   email: inc.email.replace(/,/g, ';').trim(),
-                  services: inc.services || []
+                  services: inc.services || [],
+                  notes: inc.notes || ''
               });
           }
       });
 
       return Array.from(map.values());
+  };
+
+  const handleSiglaChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    // Auto-Uppercase
+    const inputSigla = e.target.value.toUpperCase();
+    
+    // Check if Sigla already exists (case insensitive)
+    const existing = clients.find(c => c.sigla.toLowerCase().trim() === inputSigla.toLowerCase().trim());
+    
+    setNewClient(prev => ({
+        ...prev,
+        sigla: inputSigla,
+        // Auto-fill Name, Services and Notes if match found
+        name: existing ? existing.name : prev.name,
+        services: existing ? (existing.services || []) : prev.services,
+        notes: existing ? (existing.notes || '') : prev.notes
+    }));
   };
 
   const handleSave = () => {
@@ -80,7 +101,8 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ clients, onUpdateC
                     sigla: newClient.sigla,
                     name: newClient.name,
                     email: newClient.email.replace(/,/g, ';'), // Ensure semicolons
-                    services: newClient.services
+                    services: newClient.services,
+                    notes: newClient.notes
                 };
             }
             return c;
@@ -92,12 +114,13 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ clients, onUpdateC
             sigla: newClient.sigla,
             name: newClient.name,
             email: newClient.email,
-            services: newClient.services
+            services: newClient.services,
+            notes: newClient.notes
         }]);
     }
 
     onUpdateClients(updatedList);
-    setNewClient({ sigla: '', name: '', email: '', services: [] });
+    setNewClient({ sigla: '', name: '', email: '', services: [], notes: '' });
   };
 
   const handleEdit = (client: Client) => {
@@ -105,14 +128,15 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ clients, onUpdateC
           sigla: client.sigla,
           name: client.name,
           email: client.email,
-          services: client.services || []
+          services: client.services || [],
+          notes: client.notes || ''
       });
       setEditingId(client.id);
       window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleCancelEdit = () => {
-      setNewClient({ sigla: '', name: '', email: '', services: [] });
+      setNewClient({ sigla: '', name: '', email: '', services: [], notes: '' });
       setEditingId(null);
   };
 
@@ -171,7 +195,8 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ clients, onUpdateC
       Sigla: c.sigla,
       Nome: c.name,
       Email: c.email.replace(/;/g, ','),
-      Servicos: (c.services || []).join(';')
+      Servicos: (c.services || []).join(';'),
+      Observacoes: c.notes || ''
     }));
 
     const csv = Papa.unparse(csvData, {
@@ -216,6 +241,7 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ clients, onUpdateC
             const name = getVal('nome') || getVal('name');
             const email = getVal('email') || getVal('e-mail');
             const servicosRaw = getVal('servicos') || getVal('services') || '';
+            const notes = getVal('observacoes') || getVal('notes') || '';
 
             if (sigla && name && email) {
                 // Parse services from CSV (semicolon separated)
@@ -228,7 +254,8 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ clients, onUpdateC
                     sigla: sigla.toString().trim(),
                     name: name.toString().trim(),
                     email: email.toString().replace(/,/g, ';'),
-                    services: services
+                    services: services,
+                    notes: notes.toString().trim()
                 });
             }
         });
@@ -252,14 +279,21 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ clients, onUpdateC
   };
 
   const filteredClients = useMemo(() => {
-      const result = clients.filter(client => 
-        client.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        client.sigla.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        client.email.toLowerCase().includes(searchTerm.toLowerCase())
-      );
+      const result = clients.filter(client => {
+        const matchesTerm = 
+            client.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            client.sigla.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            client.email.toLowerCase().includes(searchTerm.toLowerCase());
+        
+        const matchesService = filterService 
+            ? (client.services && client.services.includes(filterService))
+            : true;
+
+        return matchesTerm && matchesService;
+      });
       // Sort alphabetically by Sigla
       return result.sort((a, b) => a.sigla.localeCompare(b.sigla));
-  }, [clients, searchTerm]);
+  }, [clients, searchTerm, filterService]);
 
   const allSelected = filteredClients.length > 0 && selectedIds.size >= filteredClients.length;
 
@@ -267,9 +301,11 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ clients, onUpdateC
     <div className="min-h-screen bg-slate-50 flex flex-col items-center py-10 px-4">
       <div className="max-w-6xl w-full bg-white rounded-2xl shadow-xl overflow-hidden">
         
-        {/* Header */}
-        <div className="bg-white p-6 border-b border-gray-100 flex flex-col xl:flex-row justify-between items-center gap-6">
-            <div className="flex items-center gap-4 w-full xl:w-auto">
+        {/* Header - Reorganized into multi-row layout */}
+        <div className="bg-white p-6 border-b border-gray-100 flex flex-col gap-6">
+            
+            {/* Row 1: Title and Back Button */}
+            <div className="flex items-center gap-4">
                 {onBack && (
                   <button onClick={onBack} className="p-2 hover:bg-gray-100 rounded-full transition text-gray-500">
                     <ArrowLeft className="w-5 h-5" />
@@ -284,27 +320,46 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ clients, onUpdateC
                 </div>
             </div>
             
-            <div className="flex flex-col sm:flex-row items-center gap-3 w-full xl:w-auto">
-                <div className="relative w-full sm:w-64">
+            {/* Row 2: Search and Filters */}
+            <div className="flex flex-col md:flex-row gap-4 w-full">
+                {/* Service Filter */}
+                <div className="relative w-full md:w-1/3">
+                    <Filter className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                    <select
+                        value={filterService}
+                        onChange={(e) => setFilterService(e.target.value)}
+                        className="w-full pl-9 pr-8 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none bg-white text-gray-600"
+                    >
+                        <option value="">Todos Serviços</option>
+                        {AVAILABLE_SERVICES.map(s => (
+                            <option key={s} value={s}>{s}</option>
+                        ))}
+                    </select>
+                </div>
+
+                {/* Text Search */}
+                <div className="relative w-full md:w-2/3">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                     <input 
                         type="text" 
-                        placeholder="Buscar cliente..." 
+                        placeholder="Buscar por Sigla, Nome ou E-mail..." 
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
-                        className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        className="w-full pl-9 pr-4 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
                 </div>
+            </div>
 
-                <div className="flex items-center bg-gray-50 rounded-lg p-1 border border-gray-200 w-full sm:w-auto justify-center">
-                    <button onClick={handleExport} className="p-2 text-gray-600 hover:text-green-600 hover:bg-white rounded-md transition-all flex items-center gap-2 text-sm font-medium flex-1 justify-center">
+            {/* Row 3: Action Buttons */}
+            <div className="flex flex-col sm:flex-row gap-4 w-full">
+                 <div className="flex items-center gap-3 w-full sm:w-auto flex-1">
+                    <button onClick={handleExport} className="flex-1 py-2.5 px-4 text-gray-700 bg-gray-50 border border-gray-200 hover:text-green-700 hover:border-green-200 hover:bg-green-50 rounded-lg transition-all flex items-center justify-center gap-2 text-sm font-medium">
                         <Download className="w-4 h-4" />
-                        <span className="inline sm:hidden lg:inline">Exportar</span>
+                        Exportar
                     </button>
-                    <div className="w-px h-4 bg-gray-300 mx-1"></div>
-                    <button onClick={handleImportClick} className="p-2 text-gray-600 hover:text-blue-600 hover:bg-white rounded-md transition-all flex items-center gap-2 text-sm font-medium flex-1 justify-center">
+                    <button onClick={handleImportClick} className="flex-1 py-2.5 px-4 text-gray-700 bg-gray-50 border border-gray-200 hover:text-blue-700 hover:border-blue-200 hover:bg-blue-50 rounded-lg transition-all flex items-center justify-center gap-2 text-sm font-medium">
                         <Upload className="w-4 h-4" />
-                        <span className="inline sm:hidden lg:inline">Importar</span>
+                        Importar
                     </button>
                     <input type="file" ref={fileInputRef} onChange={handleImport} accept=".csv" className="hidden" />
                 </div>
@@ -312,7 +367,7 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ clients, onUpdateC
                 {clients.length > 0 && !editingId && (
                     <button 
                         onClick={onNext}
-                        className="w-full sm:w-auto px-6 py-2.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-medium flex items-center justify-center gap-2 shadow-lg shadow-indigo-100 transition-all"
+                        className="w-full sm:w-auto px-8 py-2.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-medium flex items-center justify-center gap-2 shadow-md hover:shadow-lg transition-all"
                     >
                         Continuar
                         <ArrowRight className="w-4 h-4" />
@@ -341,13 +396,13 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ clients, onUpdateC
                         type="text" 
                         placeholder="Ex: JFAL"
                         value={newClient.sigla}
-                        onChange={e => setNewClient({...newClient, sigla: e.target.value})}
-                        className="w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2 border text-sm"
+                        onChange={handleSiglaChange}
+                        className="w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2 border text-sm uppercase"
                         title="Sigla usada para identificar o arquivo"
                     />
                 </div>
                 <div className="md:col-span-5">
-                    <label className="block text-xs font-medium text-gray-700 mb-1">Nome do Órgão (E-mail)</label>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">Nome do Órgão</label>
                     <input 
                         type="text" 
                         placeholder="Ex: Justiça Federal de Alagoas"
@@ -388,6 +443,18 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ clients, onUpdateC
                             </label>
                         ))}
                     </div>
+                </div>
+
+                {/* Notes Field */}
+                <div className="md:col-span-12">
+                    <label className="block text-xs font-medium text-gray-700 mb-1">Observações (Opcional)</label>
+                    <textarea 
+                        rows={2}
+                        placeholder="Informações adicionais sobre o cliente..."
+                        value={newClient.notes}
+                        onChange={e => setNewClient({...newClient, notes: e.target.value})}
+                        className="w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2 border text-sm"
+                    />
                 </div>
 
                 <div className="md:col-span-12 mt-2">
@@ -451,7 +518,14 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ clients, onUpdateC
                                     {selectedIds.has(client.id) ? <CheckSquare className="w-5 h-5 text-blue-600" /> : <Square className="w-5 h-5" />}
                                 </button>
                             </td>
-                            <td className="px-6 py-4 font-bold text-gray-700 text-sm align-top">{client.sigla}</td>
+                            <td className="px-6 py-4 font-bold text-gray-700 text-sm align-top">
+                                {client.sigla}
+                                {client.notes && (
+                                    <div className="mt-2 text-gray-400" title="Possui observações">
+                                        <FilePenLine className="w-3.5 h-3.5" />
+                                    </div>
+                                )}
+                            </td>
                             <td className="px-6 py-4 text-gray-700 text-sm align-top">
                                 <div className="font-semibold">{client.name}</div>
                                 <div className="flex flex-wrap gap-1 mt-1.5">
@@ -465,6 +539,11 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ clients, onUpdateC
                                         <span className="text-xs text-gray-400 italic">Nenhum serviço selecionado</span>
                                     )}
                                 </div>
+                                {client.notes && (
+                                    <div className="mt-2 text-xs text-gray-500 italic border-l-2 border-gray-200 pl-2">
+                                        {client.notes}
+                                    </div>
+                                )}
                             </td>
                             <td className="px-6 py-4 text-gray-500 font-mono text-xs break-all leading-relaxed max-w-md align-top">
                                 {client.email.replace(/,/g, ';').split(';').map((e, i) => (
