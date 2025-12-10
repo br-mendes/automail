@@ -1,8 +1,9 @@
-
 import React, { useState, useRef, useMemo } from 'react';
 import { Client, AVAILABLE_SERVICES } from '../types';
 import { Plus, Trash2, Users, ArrowRight, Download, Upload, FileText, Search, ArrowLeft, Edit2, X, Save, CheckSquare, Square, Filter, FilePenLine } from 'lucide-react';
 import Papa from 'papaparse';
+import { useToast } from './ToastProvider';
+import { ConfirmModal } from './ConfirmModal';
 
 interface ClientManagerProps {
   clients: Client[];
@@ -12,6 +13,7 @@ interface ClientManagerProps {
 }
 
 export const ClientManager: React.FC<ClientManagerProps> = ({ clients, onUpdateClients, onNext, onBack }) => {
+  const { addToast } = useToast();
   const [newClient, setNewClient] = useState<Omit<Client, 'id'>>({
     sigla: '',
     name: '',
@@ -24,6 +26,14 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ clients, onUpdateC
   const [filterService, setFilterService] = useState<string>(''); // New: Service Filter
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   
+  // Modal State
+  const [confirmModal, setConfirmModal] = useState<{
+      isOpen: boolean;
+      title: string;
+      message: string;
+      action: () => void;
+  }>({ isOpen: false, title: '', message: '', action: () => {} });
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Helper to merge emails into existing client list by Sigla
@@ -108,6 +118,7 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ clients, onUpdateC
             return c;
         });
         setEditingId(null);
+        addToast('success', 'Cliente atualizado com sucesso.');
     } else {
         // Add Mode: Use merge logic to prevent duplicates
         updatedList = mergeClients(clients, [{
@@ -117,6 +128,7 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ clients, onUpdateC
             services: newClient.services,
             notes: newClient.notes
         }]);
+        addToast('success', 'Cliente adicionado com sucesso.');
     }
 
     onUpdateClients(updatedList);
@@ -152,22 +164,37 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ clients, onUpdateC
   };
 
   const handleDelete = (id: string) => {
-    if (window.confirm('Tem certeza que deseja remover este cliente?')) {
-      onUpdateClients(clients.filter(c => c.id !== id));
-      if (editingId === id) handleCancelEdit();
-      const newSet = new Set(selectedIds);
-      newSet.delete(id);
-      setSelectedIds(newSet);
-    }
+    setConfirmModal({
+        isOpen: true,
+        title: "Remover Cliente",
+        message: "Tem certeza que deseja remover este cliente? Esta ação não pode ser desfeita.",
+        action: () => {
+            onUpdateClients(clients.filter(c => c.id !== id));
+            if (editingId === id) handleCancelEdit();
+            const newSet = new Set(selectedIds);
+            newSet.delete(id);
+            setSelectedIds(newSet);
+            setConfirmModal(prev => ({ ...prev, isOpen: false }));
+            addToast('info', 'Cliente removido.');
+        }
+    });
   };
 
   const handleBulkDelete = () => {
       if (selectedIds.size === 0) return;
-      if (window.confirm(`Tem certeza que deseja remover os ${selectedIds.size} clientes selecionados?`)) {
-          onUpdateClients(clients.filter(c => !selectedIds.has(c.id)));
-          setSelectedIds(new Set());
-          if (editingId && selectedIds.has(editingId)) handleCancelEdit();
-      }
+      
+      setConfirmModal({
+          isOpen: true,
+          title: "Exclusão em Massa",
+          message: `Tem certeza que deseja remover os ${selectedIds.size} clientes selecionados?`,
+          action: () => {
+              onUpdateClients(clients.filter(c => !selectedIds.has(c.id)));
+              setSelectedIds(new Set());
+              if (editingId && selectedIds.has(editingId)) handleCancelEdit();
+              setConfirmModal(prev => ({ ...prev, isOpen: false }));
+              addToast('success', `${selectedIds.size} clientes removidos.`);
+          }
+      });
   };
 
   const toggleSelection = (id: string) => {
@@ -212,6 +239,7 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ clients, onUpdateC
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    addToast('success', 'Arquivo CSV exportado.');
   };
 
   const handleImportClick = () => {
@@ -263,13 +291,13 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ clients, onUpdateC
         if (incomingClients.length > 0) {
           const merged = mergeClients(clients, incomingClients);
           onUpdateClients(merged);
-          alert(`${incomingClients.length} linhas processadas.`);
+          addToast('success', `${incomingClients.length} clientes importados/atualizados.`);
         } else {
-          alert('Não foi possível identificar clientes válidos.');
+          addToast('warning', 'Não foi possível identificar clientes válidos no arquivo.');
         }
       },
       error: () => {
-        alert('Erro ao ler o arquivo CSV.');
+        addToast('error', 'Erro ao ler o arquivo CSV.');
       }
     });
     
@@ -299,6 +327,15 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ clients, onUpdateC
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col items-center py-10 px-4">
+      {/* Confirmation Modal */}
+      <ConfirmModal 
+        isOpen={confirmModal.isOpen}
+        title={confirmModal.title}
+        message={confirmModal.message}
+        onConfirm={confirmModal.action}
+        onCancel={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
+      />
+
       <div className="max-w-6xl w-full bg-white rounded-2xl shadow-xl overflow-hidden">
         
         {/* Header - Reorganized into multi-row layout */}

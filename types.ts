@@ -43,6 +43,7 @@ export interface FileEntry {
   name: string;
   handle: FileSystemFileHandle | File; // Support standard File object for fallback
   timestamp?: number; // Cache timestamp
+  sourceHandleName?: string;
 }
 
 export enum AppState {

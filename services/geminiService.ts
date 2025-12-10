@@ -103,10 +103,22 @@ export const generateEmailContent = async (
   const monthName = date.toLocaleString('pt-BR', { month: 'long' });
   const year = date.getFullYear();
 
-  // 2. Identify Services String with Grammar
-  const servicesStr = formatServicesList(services);
+  // 2. Sort Services: "Chamados" or "Relatório de Chamados" should be last
+  const sortedServices = [...services].sort((a, b) => {
+      const aLower = a.toLowerCase();
+      const bLower = b.toLowerCase();
+      const isAChamados = aLower.includes('chamados');
+      const isBChamados = bLower.includes('chamados');
 
-  // 3. Determine Logic Branch (CAIXA vs General)
+      if (isAChamados && !isBChamados) return 1; // A goes last
+      if (!isAChamados && isBChamados) return -1; // B goes last
+      return 0; // Keep original order otherwise
+  });
+
+  // 3. Identify Services String with Grammar
+  const servicesStr = formatServicesList(sortedServices);
+
+  // 4. Determine Logic Branch (CAIXA vs General)
   const normName = normalizeText(recipientName);
   const isCaixa = normName.includes('caixa') && normName.includes('federal');
 
@@ -129,9 +141,6 @@ export const generateEmailContent = async (
     // Subject: Relatório de chamados_JAMC_[Mês/Ano]_Contrato15762/2020
     subject = `Relatório de chamados_JAMC_${monthYearFormatted}_Contrato 15762/2020`;
 
-    // Recipient Overrides: Use registered emails (passed through handleSend logic in App.tsx)
-    // overrideTo and overrideCc remain undefined here to respect client configuration
-    
     // Body
     const preposition = determineArticle("Caixa Econômica Federal");
     
@@ -173,19 +182,33 @@ ${signatureUrl}`;
     // --- GENERAL LOGIC ---
     
     // Determine singular/plural
-    const isPlural = services.length > 1;
-    const reportWord = isPlural ? "Relatórios" : "Relatório";
-    const referenceWord = isPlural ? "referentes" : "referente";
-    const articleWord = isPlural ? "os relatórios" : "o relatório";
+    const isPlural = sortedServices.length > 1;
+    
+    // Redundancy Check: If single service and it already contains "Relatório", don't double it.
+    // Ex: "Relatório de Chamados" -> Should be "DESO | Relatório de Chamados" NOT "DESO | Relatório Relatório de Chamados"
+    const isSingleAndHasRelatorio = !isPlural && servicesStr.toLowerCase().trim().startsWith('relatório');
 
-    // Subject: [SIGLA] | Relatório(s) [SERVIÇOS] - [MÊS/ANO]
+    let reportWord = isPlural ? "Relatórios" : "Relatório";
+    let articlePhrase = isPlural ? "os relatórios de" : "o relatório de";
+
+    if (isSingleAndHasRelatorio) {
+        reportWord = ""; // Suppress redundant prefix in Subject
+        articlePhrase = "o"; // Suppress "relatório de" in Body, keeping just the article
+    }
+
+    const referenceWord = isPlural ? "referentes" : "referente";
+    
+    // Subject: [SIGLA] | [Relatório?] [SERVIÇOS] - [MÊS/ANO]
     const monthYear = `${monthName.charAt(0).toUpperCase() + monthName.slice(1)}/${year}`;
-    subject = `${agencySigla} | ${reportWord} ${servicesStr} - ${monthYear}`;
+    
+    // Construct subject with proper spacing only if reportWord is not empty
+    const subjectPrefix = reportWord ? `${reportWord} ` : '';
+    subject = `${agencySigla} | ${subjectPrefix}${servicesStr} - ${monthYear}`;
 
     const preposition = determineArticle(recipientName);
 
     // Body: Encaminhamos...
-    const bodyContent = `Encaminhamos, em anexo, ${articleWord} de ${servicesStr} ${referenceWord} ao mês de ${monthName} de ${year}.
+    const bodyContent = `Encaminhamos, em anexo, ${articlePhrase} ${servicesStr} ${referenceWord} ao mês de ${monthName} de ${year}.
 
 Colocamo-nos à disposição para quaisquer esclarecimentos que se fizerem necessários.`;
 

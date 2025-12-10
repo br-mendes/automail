@@ -5,8 +5,11 @@ import { AppState, Client, Recipient, FileEntry, AutoScanConfig, SentLog, Dashbo
 import { ClientManager } from './components/ClientManager';
 import { generateEmailContent, findKeywordMatch } from './services/geminiService';
 import { COMPANY_LOGO_URL } from './constants';
+import { ToastProvider, useToast } from './components/ToastProvider';
+import { ConfirmModal } from './components/ConfirmModal';
 
-const App: React.FC = () => {
+const AppContent: React.FC = () => {
+  const { addToast } = useToast();
   const [appState, setAppState] = useState<AppState>(AppState.HOME);
   
   // Data
@@ -21,9 +24,18 @@ const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<DashboardTab>('all');
   const [dashboardSearch, setDashboardSearch] = useState('');
 
+  // Modals State
+  const [confirmModal, setConfirmModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    action: () => void;
+    variant?: 'danger' | 'warning';
+  }>({ isOpen: false, title: '', message: '', action: () => {} });
+
   // File System
   const [dirHandle, setDirHandle] = useState<FileSystemDirectoryHandle | null>(null);
-  const [folderHistory, setFolderHistory] = useState<FileSystemDirectoryHandle[]>([]);
+  const [monitoredFolders, setMonitoredFolders] = useState<FileSystemDirectoryHandle[]>([]);
   const [files, setFiles] = useState<FileEntry[]>([]);
   const [isScanning, setIsScanning] = useState(false);
   const [lastScanTime, setLastScanTime] = useState<Date | null>(null);
@@ -154,57 +166,83 @@ const App: React.FC = () => {
   }, [clients]);
 
   // 5. Scan Logic 
-  const scanDirectory = useCallback(async (handle: FileSystemDirectoryHandle) => {
-    setIsScanning(true);
-    const newFiles: FileEntry[] = [];
-    
-    try {
-      // @ts-ignore
-      for await (const entry of handle.values()) {
-        if (entry.kind === 'file') {
-          newFiles.push({ name: entry.name, handle: entry as FileSystemFileHandle });
-        }
-      }
+  const scanAllFolders = useCallback(async () => {
+      setIsScanning(true);
+      const aggregatedFiles: FileEntry[] = [];
+      const signatures: string[] = [];
 
-      // --- Cache Optimization ---
-      // Generate a signature based on sorted filenames
-      const currentSignature = newFiles.map(f => f.name).sort().join('|');
-      
-      if (currentSignature === lastScanSignatureRef.current) {
-          // No changes in file structure, skip updates
+      try {
+          // Iterate over all folders (dirHandle is just the current selection, monitoredFolders is the list)
+          // Ensure monitoredFolders contains the current one
+          const foldersToScan = monitoredFolders.length > 0 ? monitoredFolders : (dirHandle ? [dirHandle] : []);
+
+          for (const folder of foldersToScan) {
+              try {
+                  const folderFiles: FileEntry[] = [];
+                  // @ts-ignore
+                  for await (const entry of folder.values()) {
+                      if (entry.kind === 'file') {
+                          folderFiles.push({ 
+                              name: entry.name, 
+                              handle: entry as FileSystemFileHandle,
+                              sourceHandleName: folder.name 
+                          });
+                      }
+                  }
+                  
+                  // Sort and sign this folder
+                  const folderSignature = `${folder.name}:${folderFiles.map(f => f.name).sort().join('|')}`;
+                  signatures.push(folderSignature);
+                  
+                  aggregatedFiles.push(...folderFiles);
+
+              } catch (folderErr) {
+                  console.error(`Error scanning folder ${folder.name}`, folderErr);
+                  addToast('warning', `Não foi possível ler a pasta "${folder.name}". Verifique as permissões.`);
+              }
+          }
+
+          // Generate master signature
+          const masterSignature = signatures.join(';;');
+
+          if (masterSignature === lastScanSignatureRef.current && masterSignature !== '') {
+              setLastScanTime(new Date());
+              setIsScanning(false);
+              return;
+          }
+
+          lastScanSignatureRef.current = masterSignature;
+          setFiles(aggregatedFiles);
           setLastScanTime(new Date());
-          setIsScanning(false);
-          return;
-      }
 
-      // Update cache
-      lastScanSignatureRef.current = currentSignature;
-      setFiles(newFiles);
-      setLastScanTime(new Date());
-    } catch (e) {
-      console.error("Error scanning directory", e);
-      alert("Erro ao ler a pasta. Permissão expirada ou acesso negado.");
-    } finally {
-      setIsScanning(false);
-    }
-  }, []);
+      } catch (e) {
+          console.error("Scan error", e);
+          addToast('error', "Erro geral na varredura de arquivos.");
+      } finally {
+          setIsScanning(false);
+      }
+  }, [monitoredFolders, dirHandle, addToast]);
+
+  const scanDirectory = (handle: FileSystemDirectoryHandle) => {
+      // Wrapper to trigger the full scan
+      scanAllFolders();
+  };
   
   // Fallback Scan for File Input (Compatibility Mode)
   const handleFallbackFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
-      if (event.target.files) {
+      if (event.target.files && event.target.files.length > 0) {
           const fileList = Array.from(event.target.files);
           const newFiles: FileEntry[] = fileList.map(f => ({ name: f.name, handle: f, timestamp: f.lastModified }));
           
-          // Generate signature for fallback as well
           const signature = newFiles.map(f => f.name).sort().join('|');
           lastScanSignatureRef.current = signature;
 
           setFiles(newFiles);
           setLastScanTime(new Date());
           
-          // Fake a handle name
           setDirHandle({ name: "Pasta Selecionada (Modo Compatibilidade)" } as any);
           setAppState(AppState.DASHBOARD);
+          addToast('success', `${newFiles.length} arquivos carregados com sucesso.`);
       }
   };
 
@@ -213,33 +251,49 @@ const App: React.FC = () => {
     try {
       const handle = await (window as any).showDirectoryPicker();
       
-      setFolderHistory(prev => {
-        if (prev.some(h => h.name === handle.name)) return prev;
-        return [...prev, handle];
-      });
-
-      // Reset cache when switching folders
-      lastScanSignatureRef.current = '';
+      // Check if already exists
+      const exists = monitoredFolders.some(h => h.name === handle.name);
+      if (!exists) {
+          setMonitoredFolders(prev => [...prev, handle]);
+      }
+      
+      lastScanSignatureRef.current = ''; // Invalidate cache
 
       setDirHandle(handle);
       setAppState(AppState.DASHBOARD);
-      await scanDirectory(handle);
+      addToast('success', `Pasta "${handle.name}" adicionada ao monitoramento.`);
+      
+      // Trigger scan logic shortly after state update
+      setTimeout(() => scanDirectory(handle), 100);
+
     } catch (err: any) {
       console.error("Folder access denied or cancelled", err);
       if (err.name === 'SecurityError' || err.message.includes('Cross origin')) {
-          alert("Seu navegador ou ambiente bloqueou o acesso direto à pasta. Por favor, utilize o botão 'Modo Compatibilidade' abaixo.");
+          addToast('error', "Seu navegador bloqueou o acesso direto à pasta. Use o 'Modo Compatibilidade'.");
       }
     }
   };
 
+  const removeMonitoredFolder = (folderName: string, e: React.MouseEvent) => {
+      e.stopPropagation();
+      setMonitoredFolders(prev => prev.filter(f => f.name !== folderName));
+      lastScanSignatureRef.current = '';
+      addToast('info', `Pasta "${folderName}" removida do monitoramento.`);
+  };
+
   const handleHistorySelect = async (handle: FileSystemDirectoryHandle) => {
-      // Reset cache when switching folders via history
+      // Ensure it's in monitored folders
+      if (!monitoredFolders.some(f => f.name === handle.name)) {
+          setMonitoredFolders(prev => [...prev, handle]);
+      }
+      
       if (dirHandle?.name !== handle.name) {
           lastScanSignatureRef.current = '';
       }
       setDirHandle(handle);
       setAppState(AppState.DASHBOARD);
-      await scanDirectory(handle);
+      
+      setTimeout(() => scanDirectory(handle), 100);
   };
 
   // 6. Auto-Scan Heartbeat & Calculations
@@ -273,7 +327,9 @@ const App: React.FC = () => {
   };
 
   useEffect(() => {
-    if (!dirHandle || scanConfig.mode === 'disabled' || !dirHandle.values) return; // Disable auto-scan for fallback mode
+    if (!dirHandle || scanConfig.mode === 'disabled') return; // Disable auto-scan logic if no folder or disabled
+    // If using fallback mode (handle doesn't have .values), also skip or handle differently.
+    // Assuming fallback is static unless re-selected.
 
     const checkAutoScan = () => {
       if (isScanning) return;
@@ -309,13 +365,13 @@ const App: React.FC = () => {
 
       if (shouldScan) {
         lastAutoScanRef.current = currentTimestamp;
-        scanDirectory(dirHandle);
+        scanAllFolders();
       }
     };
 
     const intervalId = setInterval(checkAutoScan, 10000); // Check every 10s
     return () => clearInterval(intervalId);
-  }, [dirHandle, scanConfig, lastScanTime, isScanning, scanDirectory]);
+  }, [dirHandle, scanConfig, lastScanTime, isScanning, scanAllFolders]);
 
 
   // 7. Matching Logic (Multi-Service & CAIXA)
@@ -495,36 +551,51 @@ const App: React.FC = () => {
     setSentHistory(prev => [log, ...prev]);
 
     setRecipients(prev => prev.map(r => r.id === recipient.id ? { ...r, status: 'sent' } : r));
+    addToast('success', `E-mail para ${recipient.sigla} iniciado.`);
   };
 
   const handleSendPending = () => {
     const readyRecipients = recipients.filter(r => r.status === 'ready');
     if (readyRecipients.length === 0) return;
 
-    const confirmed = window.confirm(`Isso tentará abrir ${readyRecipients.length} janelas de e-mail. Seu navegador pode bloquear pop-ups. Deseja continuar?`);
-    if (!confirmed) return;
-
-    readyRecipients.forEach(r => {
-        handleSend(r);
+    setConfirmModal({
+        isOpen: true,
+        title: "Envio em Massa",
+        message: `Isso tentará abrir ${readyRecipients.length} janelas de e-mail. Seu navegador pode bloquear pop-ups. Deseja continuar?`,
+        variant: 'warning',
+        action: () => {
+            readyRecipients.forEach(r => handleSend(r));
+            setConfirmModal(prev => ({ ...prev, isOpen: false }));
+            addToast('info', "Processo de envio em massa iniciado.");
+        }
     });
   };
 
   const handleResetStatus = (recipient: Recipient) => {
     setRecipients(prev => prev.map(r => {
         if (r.id !== recipient.id) return r;
-        // Check if files still exist
-        // Simplified check, real check happens in effect loop
-        return {
-            ...r,
-            status: 'pending'
-        };
+        return { ...r, status: 'pending' };
     }));
+    addToast('info', `Status de ${recipient.sigla} reiniciado.`);
   };
 
   const handleClearHistory = () => {
-    if (window.confirm("Tem certeza que deseja apagar todo o histórico de envios desta lista?")) {
-        setSentHistory([]);
-    }
+    setConfirmModal({
+        isOpen: true,
+        title: "Limpar Histórico",
+        message: "Tem certeza que deseja apagar todo o histórico de envios desta lista? Esta ação não pode ser desfeita.",
+        variant: 'danger',
+        action: () => {
+            setSentHistory([]);
+            setConfirmModal(prev => ({ ...prev, isOpen: false }));
+            addToast('success', "Histórico de envios limpo.");
+        }
+    });
+  };
+
+  const handleSaveSettings = () => {
+      setShowSettings(false);
+      addToast('success', "Configurações salvas com sucesso.");
   };
 
   // Filtered List
@@ -636,7 +707,7 @@ const App: React.FC = () => {
             <ClientManager 
                 clients={clients} 
                 onUpdateClients={setClients} 
-                onNext={() => setAppState(AppState.SELECT_FOLDER)} // Updated to direct navigation
+                onNext={() => setAppState(AppState.SELECT_FOLDER)} 
                 onBack={() => setAppState(AppState.HOME)}
             />
             {showScrollTop && (
@@ -691,7 +762,7 @@ const App: React.FC = () => {
             className="px-8 py-4 bg-indigo-600 text-white rounded-xl font-semibold hover:bg-indigo-700 transition shadow-lg hover:shadow-xl hover:-translate-y-0.5 flex items-center gap-3 w-full sm:w-auto justify-center mb-4"
           >
             <FolderOpen className="w-5 h-5" />
-            Nova Pasta
+            Adicionar Pasta
           </button>
           
           {/* Compatibility Mode / Fallback Input */}
@@ -722,18 +793,18 @@ const App: React.FC = () => {
             Precisa editar clientes antes?
           </button>
 
-          {folderHistory.length > 0 && (
+          {monitoredFolders.length > 0 && (
             <div className="mt-10 pt-8 border-t w-full">
                 <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-4 text-left flex items-center gap-2">
-                    <History className="w-4 h-4" />
-                    Histórico de Sessão
+                    <MonitorPlay className="w-4 h-4" />
+                    Pastas Monitoradas ({monitoredFolders.length})
                 </h3>
                 <div className="space-y-3">
-                    {folderHistory.map((handle, idx) => (
-                        <button
+                    {monitoredFolders.map((handle, idx) => (
+                        <div
                             key={idx}
                             onClick={() => handleHistorySelect(handle)}
-                            className="w-full flex items-center justify-between p-4 bg-gray-50 hover:bg-white border border-transparent hover:border-indigo-200 hover:shadow-md rounded-xl transition-all group"
+                            className="w-full flex items-center justify-between p-4 bg-gray-50 hover:bg-white border border-transparent hover:border-indigo-200 hover:shadow-md rounded-xl transition-all group cursor-pointer"
                         >
                             <div className="flex items-center gap-3 text-left overflow-hidden">
                                 <div className="bg-white p-2 rounded-lg border shadow-sm group-hover:border-indigo-100">
@@ -743,8 +814,14 @@ const App: React.FC = () => {
                                     {handle.name}
                                 </span>
                             </div>
-                            <ChevronRight className="w-4 h-4 text-gray-400 group-hover:text-indigo-500" />
-                        </button>
+                            <button 
+                                onClick={(e) => removeMonitoredFolder(handle.name, e)}
+                                className="p-2 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition"
+                                title="Parar de monitorar"
+                            >
+                                <Trash2 className="w-4 h-4" />
+                            </button>
+                        </div>
                     ))}
                 </div>
             </div>
@@ -757,6 +834,15 @@ const App: React.FC = () => {
   // 4. DASHBOARD (DEFAULT)
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col relative">
+      <ConfirmModal 
+        isOpen={confirmModal.isOpen}
+        title={confirmModal.title}
+        message={confirmModal.message}
+        onConfirm={confirmModal.action}
+        onCancel={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
+        variant={confirmModal.variant}
+      />
+      
       {showScrollTop && (
         <button 
             onClick={scrollToTop}
@@ -895,7 +981,7 @@ const App: React.FC = () => {
             </div>
 
             <div className="p-5 border-t bg-gray-50 flex justify-end gap-3">
-              <button onClick={() => setShowSettings(false)} className="px-6 py-2.5 bg-gray-800 text-white font-medium rounded-lg hover:bg-gray-900 transition shadow-lg">
+              <button onClick={handleSaveSettings} className="px-6 py-2.5 bg-gray-800 text-white font-medium rounded-lg hover:bg-gray-900 transition shadow-lg">
                 Salvar Configurações
               </button>
             </div>
@@ -911,23 +997,29 @@ const App: React.FC = () => {
             <div className="h-8 w-px bg-gray-200 hidden sm:block"></div>
             <div>
               <h1 className="text-xl font-bold text-gray-900 hidden sm:block">AutoMail Dispatcher</h1>
-              <p className="text-xs text-gray-500 hidden sm:block">Monitorando: <span className="font-semibold text-indigo-600">{dirHandle?.name || '...'}</span></p>
+              <p className="text-xs text-gray-500 hidden sm:block">
+                  {monitoredFolders.length > 0 ? (
+                      <span className="font-semibold text-indigo-600">Monitorando {monitoredFolders.length} pasta(s)</span>
+                  ) : (
+                      <span className="text-gray-400">Nenhuma pasta monitorada</span>
+                  )}
+              </p>
             </div>
           </div>
           
           <div className="flex items-center gap-4">
              <div className="flex items-center gap-2 border-l pl-4 ml-2">
-                <button onClick={() => setAppState(AppState.SELECT_FOLDER)} className="p-2 rounded-full hover:bg-indigo-50 text-indigo-600 transition" title="Trocar Pasta"><FolderOpen className="w-5 h-5" /></button>
+                <button onClick={() => setAppState(AppState.SELECT_FOLDER)} className="p-2 rounded-full hover:bg-indigo-50 text-indigo-600 transition" title="Pastas"><FolderOpen className="w-5 h-5" /></button>
                 <button onClick={() => setAppState(AppState.HOME)} className="p-2 rounded-full hover:bg-gray-100 text-gray-600 transition" title="Início"><ArrowLeft className="w-5 h-5" /></button>
                 <button onClick={() => setAppState(AppState.MANAGE_CLIENTS)} className="p-2 rounded-full hover:bg-gray-100 text-gray-600 transition hidden sm:block" title="Gerenciar Clientes"><Users className="w-5 h-5" /></button>
                 <button onClick={() => setShowSettings(true)} className="p-2 rounded-full hover:bg-gray-100 text-gray-600 transition" title="Configurações"><Settings className="w-5 h-5" /></button>
-                <button onClick={() => dirHandle && scanDirectory(dirHandle)} disabled={isScanning} className={`p-2 rounded-full hover:bg-gray-100 transition ${isScanning ? 'animate-spin text-blue-500' : 'text-gray-600'}`} title="Atualizar Agora"><RefreshCw className="w-5 h-5" /></button>
+                <button onClick={scanAllFolders} disabled={isScanning} className={`p-2 rounded-full hover:bg-gray-100 transition ${isScanning ? 'animate-spin text-blue-500' : 'text-gray-600'}`} title="Atualizar Agora"><RefreshCw className="w-5 h-5" /></button>
              </div>
           </div>
         </div>
         
         {/* Scan Status Bar */}
-        {dirHandle && (
+        {(monitoredFolders.length > 0 || dirHandle) && (
             <div className="bg-gray-50 border-b border-gray-200 px-4 py-1.5 text-xs text-gray-500 flex justify-center sm:justify-end gap-6 max-w-7xl mx-auto">
                 <div className="flex items-center gap-1.5">
                     <MonitorPlay className="w-3.5 h-3.5" />
@@ -1142,8 +1234,15 @@ const App: React.FC = () => {
                                                     </div>
                                                     {recipient.matchedFiles?.find(f => f.service.includes('JAMC')) && (
                                                         <div className="pl-6 border-l-2 border-green-100 ml-2">
-                                                            <div className="font-mono text-xs text-gray-700 break-all bg-gray-50 p-1.5 rounded border border-gray-100 block w-full">
+                                                            <div 
+                                                                className="font-mono text-xs text-gray-700 break-all bg-gray-50 p-1.5 rounded border border-gray-100 block w-full group relative cursor-help"
+                                                            >
                                                                 {recipient.matchedFiles.find(f => f.service.includes('JAMC'))?.fileName}
+                                                                {/* Tooltip for folder source */}
+                                                                <span className="absolute bottom-full left-0 mb-2 hidden group-hover:block bg-gray-800 text-white text-[10px] p-1 rounded whitespace-nowrap z-20">
+                                                                     {/* We don't have sourceFolder in matchedFiles yet, but concept applies */}
+                                                                     Arquivo identificado
+                                                                </span>
                                                             </div>
                                                             {recipient.matchedFiles.find(f => f.service.includes('JAMC'))?.timestamp && (
                                                                 <div className="text-[10px] text-gray-400 mt-1">
@@ -1243,5 +1342,11 @@ const App: React.FC = () => {
     </div>
   );
 };
+
+const App: React.FC = () => (
+    <ToastProvider>
+        <AppContent />
+    </ToastProvider>
+);
 
 export default App;
