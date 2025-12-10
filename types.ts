@@ -1,4 +1,5 @@
 
+
 export const AVAILABLE_SERVICES = [
   "Segura", 
   "Varonis", 
@@ -6,7 +7,7 @@ export const AVAILABLE_SERVICES = [
   "Veritas", 
   "Trend / IBM Qradar / Axur", 
   "Veritas Infoscale Storage", 
-  "Chamados"
+  "Relatório de Chamados"
 ];
 
 export interface Client {

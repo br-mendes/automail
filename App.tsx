@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { FolderOpen, RefreshCw, Send, CheckCircle, Clock, File as FileIcon, Search, AlertTriangle, RotateCcw, Zap, Settings, X, CalendarClock, Timer, Users, Mail, ArrowLeft, LayoutDashboard, History, ChevronRight, Filter, MonitorPlay, Trash2, XCircle, ArrowUp } from 'lucide-react';
+import { FolderOpen, RefreshCw, Send, CheckCircle, Clock, File as FileIcon, Search, AlertTriangle, RotateCcw, Zap, Settings, X, CalendarClock, Timer, Users, Mail, ArrowLeft, LayoutDashboard, History, ChevronRight, Filter, MonitorPlay, Trash2, XCircle, ArrowUp, AlertCircle } from 'lucide-react';
 import { AppState, Client, Recipient, FileEntry, AutoScanConfig, SentLog, DashboardTab } from './types';
 import { ClientManager } from './components/ClientManager';
 import { generateEmailContent, findKeywordMatch } from './services/geminiService';
@@ -48,6 +48,9 @@ const AppContent: React.FC = () => {
 
   // Scroll To Top Logic
   const [showScrollTop, setShowScrollTop] = useState(false);
+
+  // Environment Check
+  const isIframe = typeof window !== 'undefined' && window.self !== window.top;
 
   useEffect(() => {
     const handleScroll = () => {
@@ -177,6 +180,7 @@ const AppContent: React.FC = () => {
           const foldersToScan = monitoredFolders.length > 0 ? monitoredFolders : (dirHandle ? [dirHandle] : []);
 
           for (const folder of foldersToScan) {
+              if (!folder) continue;
               try {
                   const folderFiles: FileEntry[] = [];
                   // @ts-ignore
@@ -248,6 +252,11 @@ const AppContent: React.FC = () => {
 
   // 4. Handle Folder Selection
   const handleSelectFolder = async () => {
+    if (isIframe) {
+        addToast('warning', "Em ambientes restritos (iframes), use o botão 'Modo Compatibilidade'.");
+        return;
+    }
+
     try {
       const handle = await (window as any).showDirectoryPicker();
       
@@ -268,8 +277,8 @@ const AppContent: React.FC = () => {
 
     } catch (err: any) {
       console.error("Folder access denied or cancelled", err);
-      if (err.name === 'SecurityError' || err.message.includes('Cross origin')) {
-          addToast('error', "Seu navegador bloqueou o acesso direto à pasta. Use o 'Modo Compatibilidade'.");
+      if (err.name === 'SecurityError' || err.message.includes('Cross origin') || err.message.includes('user gesture')) {
+          addToast('error', "Acesso direto bloqueado pelo navegador. Use o botão 'Modo Compatibilidade' abaixo.");
       }
     }
   };
@@ -759,14 +768,25 @@ const AppContent: React.FC = () => {
 
           <button 
             onClick={handleSelectFolder}
-            className="px-8 py-4 bg-indigo-600 text-white rounded-xl font-semibold hover:bg-indigo-700 transition shadow-lg hover:shadow-xl hover:-translate-y-0.5 flex items-center gap-3 w-full sm:w-auto justify-center mb-4"
+            disabled={isIframe}
+            className={`px-8 py-4 text-white rounded-xl font-semibold transition shadow-lg flex items-center gap-3 w-full sm:w-auto justify-center mb-4
+                ${isIframe ? 'bg-gray-400 cursor-not-allowed opacity-60' : 'bg-indigo-600 hover:bg-indigo-700 hover:shadow-xl hover:-translate-y-0.5'}
+            `}
+            title={isIframe ? "Indisponível neste ambiente (iframe)" : "Selecionar Pasta"}
           >
             <FolderOpen className="w-5 h-5" />
             Adicionar Pasta
           </button>
           
+          {isIframe && (
+             <div className="bg-yellow-50 text-yellow-800 text-sm px-4 py-2 rounded-lg mb-4 flex items-center gap-2 border border-yellow-100">
+                <AlertCircle className="w-4 h-4" />
+                Acesso direto a pastas bloqueado neste ambiente. Utilize o botão abaixo.
+             </div>
+          )}
+
           {/* Compatibility Mode / Fallback Input */}
-          <div className="relative">
+          <div className="relative w-full sm:w-auto">
               <input 
                  type="file" 
                  // @ts-ignore
@@ -779,10 +799,18 @@ const AppContent: React.FC = () => {
               />
               <button 
                 onClick={() => fallbackFileInputRef.current?.click()}
-                className="text-xs text-indigo-500 hover:text-indigo-700 underline"
+                className={`w-full sm:w-auto px-8 py-3 rounded-xl border-2 font-medium transition flex items-center justify-center gap-2
+                    ${isIframe 
+                        ? 'bg-blue-600 text-white border-blue-600 hover:bg-blue-700 shadow-md' 
+                        : 'bg-white text-indigo-600 border-indigo-100 hover:border-indigo-300 hover:bg-indigo-50'}
+                `}
               >
-                Modo Compatibilidade (Se ocorrer erro ao abrir pasta)
+                <FolderOpen className="w-5 h-5" />
+                {isIframe ? "Selecionar Pasta (Modo Compatibilidade)" : "Modo Compatibilidade"}
               </button>
+              <div className="text-[10px] text-gray-400 mt-2">
+                 Use se ocorrer erro de permissão com o botão principal.
+              </div>
           </div>
 
            <button 

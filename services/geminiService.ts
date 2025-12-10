@@ -1,4 +1,5 @@
 
+
 import { GoogleGenAI } from "@google/genai";
 import { EmailGenerationResponse } from "../types";
 import { COMPANY_LOGO_URL } from "../constants";
@@ -79,12 +80,22 @@ export const findKeywordMatch = (
         // General Strict Rule: Must contain Sigla AND Service Name
         const hasSpecificAgency = cleanAgency.length > 2 && cleanAgency !== 'geral';
         
+        // Special Case: "Relatório de Chamados" should match files named simply "Chamados"
+        const isChamadosService = cleanService.includes("chamados");
+        
         if (hasSpecificAgency) {
             // Only match if it contains BOTH Sigla and Service
+            // Allow flexibility if service contains "Chamados" -> accept matching "chamados" in file
+            if (isChamadosService) {
+                 return normFileName.includes(cleanAgency) && normFileName.includes("chamados");
+            }
             return normFileName.includes(cleanAgency) && normFileName.includes(cleanService);
         }
 
         // Fallback for weak sigla (rare)
+        if (isChamadosService) {
+             return normFileName.includes(cleanName) && normFileName.includes("chamados");
+        }
         return normFileName.includes(cleanName) && normFileName.includes(cleanService);
     });
 
