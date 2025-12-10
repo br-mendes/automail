@@ -36,6 +36,20 @@ const determineArticle = (name: string): string => {
 };
 
 /**
+ * Helper to format services list with proper grammar (comma + 'e')
+ * Ex: ["Varonis", "Loqed"] -> "Varonis e Loqed"
+ * Ex: ["A", "B", "C"] -> "A, B e C"
+ */
+const formatServicesList = (services: string[]): string => {
+  if (!services || services.length === 0) return 'Serviços';
+  if (services.length === 1) return services[0];
+  
+  const last = services[services.length - 1];
+  const rest = services.slice(0, services.length - 1);
+  return `${rest.join(', ')} e ${last}`;
+};
+
+/**
  * Strict match logic.
  * CAIXA: Must match "JAMC_15762_2020"
  * General: Must match Sigla + Service
@@ -89,8 +103,8 @@ export const generateEmailContent = async (
   const monthName = date.toLocaleString('pt-BR', { month: 'long' });
   const year = date.getFullYear();
 
-  // 2. Identify Services String
-  const servicesStr = services.length > 0 ? services.join(', ') : 'Serviços';
+  // 2. Identify Services String with Grammar
+  const servicesStr = formatServicesList(services);
 
   // 3. Determine Logic Branch (CAIXA vs General)
   const normName = normalizeText(recipientName);
@@ -158,9 +172,9 @@ ${signatureUrl}`;
   } else {
     // --- GENERAL LOGIC ---
     
-    // Subject: [SIGLA] | [SERVIÇOS DO CLIENTE] - [MÊS E ANO DA DATA DO ENVIO]
+    // Subject: [SIGLA] | Relatório(s) [SERVIÇOS] - [MÊS/ANO]
     const monthYear = `${monthName.charAt(0).toUpperCase() + monthName.slice(1)}/${year}`;
-    subject = `${agencySigla} | ${servicesStr} - ${monthYear}`;
+    subject = `${agencySigla} | Relatório(s) ${servicesStr} - ${monthYear}`;
 
     const preposition = determineArticle(recipientName);
 
