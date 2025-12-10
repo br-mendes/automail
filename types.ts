@@ -1,19 +1,35 @@
 
+export const AVAILABLE_SERVICES = [
+  "Segura", 
+  "Varonis", 
+  "Loqed", 
+  "Veritas", 
+  "Trend / IBM Qradar / Axur", 
+  "Veritas Infoscale Storage", 
+  "Chamados"
+];
+
 export interface Client {
   id: string;
   sigla: string; // Ex: JFAL (Used for matching)
   name: string; // Ex: Justiça Federal de Alagoas (Used for Email Body)
   email: string; // To recipients
+  services: string[]; // List of services enabled for this client
 }
 
 export interface Recipient extends Client {
   status: 'pending' | 'file_found' | 'ready' | 'sent';
-  matchedFileName?: string;
+  // matchedFileName is deprecated in favor of matchedFiles for multi-service support
+  matchedFileName?: string; 
+  matchedFiles?: { service: string, fileName: string }[]; // New: Track files per service
+  missingServices?: string[]; // New: Track which services are missing files
   matchedTime?: Date; // Timestamp when the file was identified
   emailSubject?: string;
   emailBody?: string; // Plain text for mailto
   emailBodyHtml?: string; // HTML structure with signature embed
   agency: string; // Kept for compatibility, maps to sigla or name depending on usage
+  overrideTo?: string; // Specific overrides for special clients (e.g. CAIXA)
+  overrideCc?: string;
 }
 
 export interface FileEntry {
@@ -32,6 +48,8 @@ export interface EmailGenerationResponse {
   subject: string;
   body: string;
   bodyHtml: string;
+  overrideTo?: string;
+  overrideCc?: string;
 }
 
 export type AutoScanMode = 'disabled' | 'interval' | 'fixed';

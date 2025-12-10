@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useMemo } from 'react';
-import { Client } from '../types';
+import { Client, AVAILABLE_SERVICES } from '../types';
 import { Plus, Trash2, Users, ArrowRight, Download, Upload, FileText, Search, ArrowLeft, Edit2, X, Save, CheckSquare, Square } from 'lucide-react';
 import Papa from 'papaparse';
 
@@ -15,7 +15,8 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ clients, onUpdateC
   const [newClient, setNewClient] = useState<Omit<Client, 'id'>>({
     sigla: '',
     name: '',
-    email: ''
+    email: '',
+    services: []
   });
   const [editingId, setEditingId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -40,14 +41,25 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ clients, onUpdateC
               const newEmails = inc.email.split(/[,;]+/).map(e => e.trim());
               const uniqueEmails = Array.from(new Set([...existingEmails, ...newEmails])).filter(Boolean).join('; ');
               
-              map.set(key, { ...existing, email: uniqueEmails, name: inc.name || existing.name });
+              // Merge services
+              const existingServices = existing.services || [];
+              const newServices = inc.services || [];
+              const uniqueServices = Array.from(new Set([...existingServices, ...newServices]));
+
+              map.set(key, { 
+                  ...existing, 
+                  email: uniqueEmails, 
+                  name: inc.name || existing.name,
+                  services: uniqueServices
+              });
           } else {
               // Add new
               map.set(key, {
                   id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
                   sigla: inc.sigla.trim(),
                   name: inc.name.trim(),
-                  email: inc.email.replace(/,/g, ';').trim()
+                  email: inc.email.replace(/,/g, ';').trim(),
+                  services: inc.services || []
               });
           }
       });
@@ -67,7 +79,8 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ clients, onUpdateC
                     ...c,
                     sigla: newClient.sigla,
                     name: newClient.name,
-                    email: newClient.email.replace(/,/g, ';') // Ensure semicolons
+                    email: newClient.email.replace(/,/g, ';'), // Ensure semicolons
+                    services: newClient.services
                 };
             }
             return c;
@@ -78,34 +91,46 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ clients, onUpdateC
         updatedList = mergeClients(clients, [{
             sigla: newClient.sigla,
             name: newClient.name,
-            email: newClient.email
+            email: newClient.email,
+            services: newClient.services
         }]);
     }
 
     onUpdateClients(updatedList);
-    setNewClient({ sigla: '', name: '', email: '' });
+    setNewClient({ sigla: '', name: '', email: '', services: [] });
   };
 
   const handleEdit = (client: Client) => {
       setNewClient({
           sigla: client.sigla,
           name: client.name,
-          email: client.email
+          email: client.email,
+          services: client.services || []
       });
       setEditingId(client.id);
       window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleCancelEdit = () => {
-      setNewClient({ sigla: '', name: '', email: '' });
+      setNewClient({ sigla: '', name: '', email: '', services: [] });
       setEditingId(null);
+  };
+
+  const toggleService = (service: string) => {
+      setNewClient(prev => {
+          const current = prev.services || [];
+          if (current.includes(service)) {
+              return { ...prev, services: current.filter(s => s !== service) };
+          } else {
+              return { ...prev, services: [...current, service] };
+          }
+      });
   };
 
   const handleDelete = (id: string) => {
     if (window.confirm('Tem certeza que deseja remover este cliente?')) {
       onUpdateClients(clients.filter(c => c.id !== id));
       if (editingId === id) handleCancelEdit();
-      // Remove from selection if deleted
       const newSet = new Set(selectedIds);
       newSet.delete(id);
       setSelectedIds(newSet);
@@ -145,7 +170,8 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ clients, onUpdateC
     const csvData = clients.map(c => ({
       Sigla: c.sigla,
       Nome: c.name,
-      Email: c.email.replace(/;/g, ',')
+      Email: c.email.replace(/;/g, ','),
+      Servicos: (c.services || []).join(';')
     }));
 
     const csv = Papa.unparse(csvData, {
@@ -189,12 +215,20 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ clients, onUpdateC
             const sigla = getVal('sigla') || getVal('orgao') || getVal('agency');
             const name = getVal('nome') || getVal('name');
             const email = getVal('email') || getVal('e-mail');
+            const servicosRaw = getVal('servicos') || getVal('services') || '';
 
             if (sigla && name && email) {
+                // Parse services from CSV (semicolon separated)
+                let services: string[] = [];
+                if (servicosRaw) {
+                    services = servicosRaw.split(';').map((s: string) => s.trim()).filter((s: string) => s.length > 0);
+                }
+
                 incomingClients.push({
                     sigla: sigla.toString().trim(),
                     name: name.toString().trim(),
-                    email: email.toString().replace(/,/g, ';') 
+                    email: email.toString().replace(/,/g, ';'),
+                    services: services
                 });
             }
         });
@@ -218,11 +252,13 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ clients, onUpdateC
   };
 
   const filteredClients = useMemo(() => {
-      return clients.filter(client => 
+      const result = clients.filter(client => 
         client.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
         client.sigla.toLowerCase().includes(searchTerm.toLowerCase()) ||
         client.email.toLowerCase().includes(searchTerm.toLowerCase())
       );
+      // Sort alphabetically by Sigla
+      return result.sort((a, b) => a.sigla.localeCompare(b.sigla));
   }, [clients, searchTerm]);
 
   const allSelected = filteredClients.length > 0 && selectedIds.size >= filteredClients.length;
@@ -244,7 +280,7 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ clients, onUpdateC
                 </div>
                 <div>
                     <h2 className="text-2xl font-bold text-gray-800">Gerenciar Clientes</h2>
-                    <p className="text-gray-500 text-sm">Cadastre os órgãos e contatos (Agrupados por Sigla).</p>
+                    <p className="text-gray-500 text-sm">Cadastre os órgãos, e-mails e serviços contratados.</p>
                 </div>
             </div>
             
@@ -298,7 +334,7 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ clients, onUpdateC
                 )}
             </div>
             
-            <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end">
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-start">
                 <div className="md:col-span-2">
                     <label className="block text-xs font-medium text-gray-700 mb-1">Sigla (Busca)</label>
                     <input 
@@ -310,7 +346,7 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ clients, onUpdateC
                         title="Sigla usada para identificar o arquivo"
                     />
                 </div>
-                <div className="md:col-span-4">
+                <div className="md:col-span-5">
                     <label className="block text-xs font-medium text-gray-700 mb-1">Nome do Órgão (E-mail)</label>
                     <input 
                         type="text" 
@@ -320,7 +356,7 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ clients, onUpdateC
                         className="w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2 border text-sm"
                     />
                 </div>
-                <div className="md:col-span-4">
+                <div className="md:col-span-5">
                     <label className="block text-xs font-medium text-gray-700 mb-1">E-mails (Separados por ;)</label>
                     <input 
                         type="text" 
@@ -330,20 +366,43 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ clients, onUpdateC
                         className="w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2 border text-sm"
                     />
                 </div>
-                <div className="md:col-span-2">
+                
+                {/* Services Checkboxes */}
+                <div className="md:col-span-12">
+                    <label className="block text-xs font-medium text-gray-700 mb-2">Serviços Contratados</label>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                        {AVAILABLE_SERVICES.map(service => (
+                            <label key={service} className="flex items-center gap-2 cursor-pointer select-none">
+                                <div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${
+                                    (newClient.services || []).includes(service) ? 'bg-blue-600 border-blue-600' : 'bg-white border-gray-300'
+                                }`}>
+                                    {(newClient.services || []).includes(service) && <CheckSquare className="w-3 h-3 text-white" />}
+                                </div>
+                                <input 
+                                    type="checkbox" 
+                                    className="hidden"
+                                    checked={(newClient.services || []).includes(service)}
+                                    onChange={() => toggleService(service)}
+                                />
+                                <span className="text-xs text-gray-700">{service}</span>
+                            </label>
+                        ))}
+                    </div>
+                </div>
+
+                <div className="md:col-span-12 mt-2">
                     <button 
                         onClick={handleSave}
                         disabled={!newClient.sigla || !newClient.name || !newClient.email}
-                        className={`w-full py-2 text-white rounded-lg font-medium flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed text-sm shadow-sm
+                        className={`w-full py-2.5 text-white rounded-lg font-medium flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed text-sm shadow-sm
                             ${editingId ? 'bg-yellow-600 hover:bg-yellow-700' : 'bg-blue-600 hover:bg-blue-700'}
                         `}
                     >
                         {editingId ? <Save className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
-                        {editingId ? 'Salvar' : 'Adicionar'}
+                        {editingId ? 'Salvar Cliente' : 'Adicionar Cliente'}
                     </button>
                 </div>
             </div>
-            {!editingId && <p className="text-xs text-gray-400 mt-2">* Se a Sigla já existir, os e-mails serão adicionados ao cadastro existente.</p>}
         </div>
 
         {/* Bulk Action Bar */}
@@ -376,7 +435,7 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ clients, onUpdateC
                             </button>
                         </th>
                         <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase">Sigla</th>
-                        <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase">Nome Completo</th>
+                        <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase">Nome / Serviços</th>
                         <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase">Destinatários</th>
                         <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase text-right">Ação</th>
                     </tr>
@@ -384,7 +443,7 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ clients, onUpdateC
                 <tbody className="divide-y divide-gray-50">
                     {filteredClients.map(client => (
                         <tr key={client.id} className={`hover:bg-gray-50 group transition-colors ${editingId === client.id ? 'bg-yellow-50' : ''}`}>
-                            <td className="px-6 py-4">
+                            <td className="px-6 py-4 align-top">
                                 <button 
                                     onClick={() => toggleSelection(client.id)}
                                     className="text-gray-300 hover:text-gray-500"
@@ -392,16 +451,29 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ clients, onUpdateC
                                     {selectedIds.has(client.id) ? <CheckSquare className="w-5 h-5 text-blue-600" /> : <Square className="w-5 h-5" />}
                                 </button>
                             </td>
-                            <td className="px-6 py-4 font-bold text-gray-700 text-sm">{client.sigla}</td>
-                            <td className="px-6 py-4 text-gray-700 text-sm">{client.name}</td>
-                            <td className="px-6 py-4 text-gray-500 font-mono text-xs break-all leading-relaxed max-w-md">
+                            <td className="px-6 py-4 font-bold text-gray-700 text-sm align-top">{client.sigla}</td>
+                            <td className="px-6 py-4 text-gray-700 text-sm align-top">
+                                <div className="font-semibold">{client.name}</div>
+                                <div className="flex flex-wrap gap-1 mt-1.5">
+                                    {(client.services || []).length > 0 ? (
+                                        (client.services || []).map(s => (
+                                            <span key={s} className="inline-block px-2 py-0.5 bg-blue-50 text-blue-700 text-[10px] rounded border border-blue-100 font-medium">
+                                                {s}
+                                            </span>
+                                        ))
+                                    ) : (
+                                        <span className="text-xs text-gray-400 italic">Nenhum serviço selecionado</span>
+                                    )}
+                                </div>
+                            </td>
+                            <td className="px-6 py-4 text-gray-500 font-mono text-xs break-all leading-relaxed max-w-md align-top">
                                 {client.email.replace(/,/g, ';').split(';').map((e, i) => (
                                     <span key={i} className="inline-block bg-white rounded px-1.5 py-0.5 mr-1 mb-1 border border-gray-200 shadow-sm text-gray-600">
                                         {e.trim()}
                                     </span>
                                 ))}
                             </td>
-                            <td className="px-6 py-4 text-right">
+                            <td className="px-6 py-4 text-right align-top">
                                 <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                     <button 
                                         onClick={() => handleEdit(client)}

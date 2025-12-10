@@ -1,5 +1,6 @@
+
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { FolderOpen, RefreshCw, Send, CheckCircle, Clock, File as FileIcon, Search, AlertTriangle, RotateCcw, Zap, Settings, X, CalendarClock, Timer, Users, Mail, ArrowLeft, LayoutDashboard, History, ChevronRight, Filter, MonitorPlay, Trash2 } from 'lucide-react';
+import { FolderOpen, RefreshCw, Send, CheckCircle, Clock, File as FileIcon, Search, AlertTriangle, RotateCcw, Zap, Settings, X, CalendarClock, Timer, Users, Mail, ArrowLeft, LayoutDashboard, History, ChevronRight, Filter, MonitorPlay, Trash2, XCircle } from 'lucide-react';
 import { AppState, Client, Recipient, FileEntry, AutoScanConfig, SentLog, DashboardTab } from './types';
 import { ClientManager } from './components/ClientManager';
 import { generateEmailContent, findKeywordMatch } from './services/geminiService';
@@ -18,6 +19,7 @@ const App: React.FC = () => {
   const [scanConfig, setScanConfig] = useState<AutoScanConfig>({ mode: 'disabled', intervalMinutes: 30 });
   const [showSettings, setShowSettings] = useState(false);
   const [activeTab, setActiveTab] = useState<DashboardTab>('all');
+  const [dashboardSearch, setDashboardSearch] = useState('');
 
   // File System
   const [dirHandle, setDirHandle] = useState<FileSystemDirectoryHandle | null>(null);
@@ -40,9 +42,14 @@ const App: React.FC = () => {
               const existingEmails = existing.email.split(/[,;]+/).map(e => e.trim());
               const newEmails = c.email.split(/[,;]+/).map(e => e.trim());
               const uniqueEmails = Array.from(new Set([...existingEmails, ...newEmails])).filter(Boolean).join('; '); // Use ; for Outlook
-              map.set(key, { ...existing, email: uniqueEmails });
+              
+              const existingServices = existing.services || [];
+              const newServices = c.services || [];
+              const uniqueServices = Array.from(new Set([...existingServices, ...newServices]));
+
+              map.set(key, { ...existing, email: uniqueEmails, services: uniqueServices });
           } else {
-              map.set(key, { ...c, email: c.email.replace(/,/g, ';') });
+              map.set(key, { ...c, email: c.email.replace(/,/g, ';'), services: c.services || [] });
           }
       });
       return Array.from(map.values());
@@ -110,11 +117,15 @@ const App: React.FC = () => {
                 ...client,
                 agency: client.sigla, 
                 status: existing ? existing.status : 'pending',
-                matchedFileName: existing ? existing.matchedFileName : undefined,
+                // Keep history of matches if still relevant, but logic will re-evaluate
+                matchedFiles: existing ? existing.matchedFiles : [],
+                missingServices: existing ? existing.missingServices : [],
                 matchedTime: existing ? existing.matchedTime : undefined,
                 emailSubject: existing ? existing.emailSubject : undefined,
                 emailBody: existing ? existing.emailBody : undefined,
                 emailBodyHtml: existing ? existing.emailBodyHtml : undefined,
+                overrideTo: existing ? existing.overrideTo : undefined,
+                overrideCc: existing ? existing.overrideCc : undefined,
             };
         });
     });
@@ -259,7 +270,7 @@ const App: React.FC = () => {
   }, [dirHandle, scanConfig, lastScanTime, isScanning, scanDirectory]);
 
 
-  // 7. Matching Logic
+  // 7. Matching Logic (Multi-Service & CAIXA)
   useEffect(() => {
     if (files.length === 0 || recipients.length === 0) return;
 
@@ -271,21 +282,70 @@ const App: React.FC = () => {
       for (let i = 0; i < updatedRecipients.length; i++) {
         const r = updatedRecipients[i];
         
-        if (r.status !== 'pending' && r.matchedFileName && fileNames.includes(r.matchedFileName)) {
-            continue;
+        // Skip if sent
+        if (r.status === 'sent') continue;
+
+        // Determine if CAIXA
+        const isCaixa = r.sigla.toLowerCase().includes('caixa') || r.sigla.toLowerCase().includes('jamc') || r.name.toLowerCase().includes('caixa');
+        
+        const matchedFiles: { service: string, fileName: string }[] = [];
+        const missingServices: string[] = [];
+
+        if (isCaixa) {
+            // CAIXA Rule: Strictly match JAMC_15762_2020 regardless of service count
+            // We treat it as one 'monolithic' report
+            const match = findKeywordMatch(r.name, r.sigla, "", fileNames);
+            if (match) {
+                matchedFiles.push({ service: "Relatório CAIXA (JAMC)", fileName: match });
+            } else {
+                missingServices.push("Relatório JAMC");
+            }
+        } else {
+            // General Rule: Check each service
+            const servicesToCheck = (r.services && r.services.length > 0) ? r.services : [];
+            
+            if (servicesToCheck.length === 0) {
+                 // Flag as empty configuration - cannot be ready
+            } else {
+                servicesToCheck.forEach(service => {
+                    const match = findKeywordMatch(r.name, r.sigla, service, fileNames);
+                    if (match) {
+                        matchedFiles.push({ service, fileName: match });
+                    } else {
+                        missingServices.push(service);
+                    }
+                });
+            }
         }
 
-        const strictMatch = findKeywordMatch(r.name, r.sigla, fileNames);
+        // Determine Status
+        // For General: Ready ONLY if services are defined AND ALL missing services are 0 AND match count > 0
+        const servicesConfigured = isCaixa || (r.services && r.services.length > 0);
+        const allFound = servicesConfigured && missingServices.length === 0 && matchedFiles.length > 0;
         
-        if (strictMatch) {
-            updatedRecipients[i] = { 
-                ...r, 
-                status: 'file_found', 
-                matchedFileName: strictMatch,
-                matchedTime: new Date() // Set found time
-            };
-            hasChanges = true;
-            continue;
+        let newStatus = r.status;
+        
+        if (allFound) {
+            newStatus = r.status === 'ready' ? 'ready' : 'file_found'; // file_found triggers generation
+        } else {
+            newStatus = 'pending';
+        }
+
+        // Only update if something changed
+        const prevFiles = JSON.stringify(r.matchedFiles || []);
+        const newFilesStr = JSON.stringify(matchedFiles);
+        const prevMissing = JSON.stringify(r.missingServices || []);
+        const newMissingStr = JSON.stringify(missingServices);
+
+        if (newStatus !== r.status || prevFiles !== newFilesStr || prevMissing !== newMissingStr) {
+             updatedRecipients[i] = {
+                 ...r,
+                 status: newStatus as any,
+                 matchedFiles: matchedFiles,
+                 missingServices: missingServices,
+                 matchedTime: allFound ? new Date() : undefined
+             };
+             hasChanges = true;
         }
       }
 
@@ -301,7 +361,9 @@ const App: React.FC = () => {
   // 8. Generate Email Content
   useEffect(() => {
     const generateContent = async () => {
-      const targets = recipients.filter(r => r.status === 'file_found' && !r.emailBody);
+      // Generate only if 'file_found' (which means newly matched and ready for content gen)
+      // or if status is ready but body is empty (manual reset)
+      const targets = recipients.filter(r => (r.status === 'file_found' || (r.status === 'ready' && !r.emailBody)));
       
       if (targets.length === 0) return;
 
@@ -311,13 +373,18 @@ const App: React.FC = () => {
         const index = updatedRecipients.findIndex(r => r.id === target.id);
         if (index === -1) return;
 
-        // Use 'target.name' (Full Name) as Agency Name for email formatting
-        const content = await generateEmailContent(target.name, target.name, target.matchedFileName!);
+        // Use the first matched file name for reference, or a placeholder if multiple
+        const primaryFile = target.matchedFiles && target.matchedFiles.length > 0 ? target.matchedFiles[0].fileName : '';
+        
+        const content = await generateEmailContent(target.name, target.sigla, primaryFile, target.services);
+        
         updatedRecipients[index] = {
             ...updatedRecipients[index],
             emailSubject: content.subject,
             emailBody: content.body,
             emailBodyHtml: content.bodyHtml,
+            overrideTo: content.overrideTo,
+            overrideCc: content.overrideCc,
             status: 'ready'
         };
       }));
@@ -336,10 +403,14 @@ const App: React.FC = () => {
     const subject = encodeURIComponent(recipient.emailSubject);
     const body = encodeURIComponent(recipient.emailBody);
     
+    // Check for overrides (e.g. CAIXA used to have them, now we rely on DB but keep support)
+    let cc = recipient.overrideCc || globalCC;
+    let to = recipient.overrideTo || recipient.email;
+
     // Outlook requirement: Separator must be ';'
     // Ensure all comma separated values are replaced with semicolons
-    const cc = globalCC.replace(/,/g, ';').trim(); 
-    const to = recipient.email.replace(/,/g, ';').trim();
+    cc = cc.replace(/,/g, ';').trim(); 
+    to = to.replace(/,/g, ';').trim();
     
     window.open(`mailto:${to}?cc=${cc}&subject=${subject}&body=${body}`, '_blank');
     
@@ -371,10 +442,11 @@ const App: React.FC = () => {
   const handleResetStatus = (recipient: Recipient) => {
     setRecipients(prev => prev.map(r => {
         if (r.id !== recipient.id) return r;
-        const fileExists = files.some(f => f.name === r.matchedFileName);
+        // Check if files still exist
+        // Simplified check, real check happens in effect loop
         return {
             ...r,
-            status: fileExists ? 'ready' : 'pending'
+            status: 'pending'
         };
     }));
   };
@@ -387,11 +459,23 @@ const App: React.FC = () => {
 
   // Filtered List
   const getFilteredRecipients = () => {
-      if (activeTab === 'all') return recipients;
-      if (activeTab === 'pending') return recipients.filter(r => r.status === 'pending');
-      if (activeTab === 'ready') return recipients.filter(r => r.status === 'ready');
-      if (activeTab === 'sent') return recipients.filter(r => r.status === 'sent');
-      return recipients;
+      let filtered = recipients;
+      if (activeTab === 'pending') filtered = recipients.filter(r => r.status === 'pending');
+      if (activeTab === 'ready') filtered = recipients.filter(r => r.status === 'ready');
+      if (activeTab === 'sent') filtered = recipients.filter(r => r.status === 'sent');
+      
+      // Filter by Search Term
+      if (dashboardSearch) {
+          const lowerTerm = dashboardSearch.toLowerCase();
+          filtered = filtered.filter(r => 
+              r.name.toLowerCase().includes(lowerTerm) ||
+              r.sigla.toLowerCase().includes(lowerTerm) ||
+              r.email.toLowerCase().includes(lowerTerm)
+          );
+      }
+      
+      // Sort alphabetically by Sigla
+      return filtered.sort((a, b) => a.sigla.localeCompare(b.sigla));
   };
 
   const displayRecipients = getFilteredRecipients();
@@ -588,11 +672,11 @@ const App: React.FC = () => {
               <div className="space-y-3">
                 <h4 className="text-sm font-bold text-gray-500 uppercase tracking-wider flex items-center gap-2">
                     <Mail className="w-4 h-4" />
-                    Destinatários Cópia (CC)
+                    Destinatários Cópia (CC) - Padrão Geral
                 </h4>
                 <div className="bg-blue-50 border border-blue-100 p-4 rounded-lg">
                     <p className="text-xs text-blue-700 mb-2">
-                        Estes e-mails serão adicionados automaticamente em Cópia em <strong>todos</strong> os disparos.
+                        Estes e-mails serão adicionados automaticamente em Cópia em disparos normais (exceto quando houver regra específica do cliente).
                         <br/>
                         <span className="opacity-75">Use <strong>ponto e vírgula (;)</strong> para separar múltiplos e-mails (Padrão Outlook).</span>
                     </p>
@@ -794,31 +878,47 @@ const App: React.FC = () => {
             </div>
         </div>
 
-        {/* Highlighted Filters/Tabs */}
-        <div className="flex items-center gap-4 mb-6 overflow-x-auto pb-2">
-            {[
-                { id: 'all', label: 'Todos', count: recipients.length, color: 'bg-gray-100 text-gray-600', active: 'bg-gray-800 text-white shadow-lg' },
-                { id: 'pending', label: 'Aguardando', count: recipients.filter(r => r.status === 'pending').length, color: 'bg-red-50 text-red-600', active: 'bg-red-600 text-white shadow-lg shadow-red-200' },
-                { id: 'ready', label: 'Prontos', count: recipients.filter(r => r.status === 'ready').length, color: 'bg-yellow-50 text-yellow-700', active: 'bg-yellow-500 text-white shadow-lg shadow-yellow-200' },
-                { id: 'sent', label: 'Enviados', count: recipients.filter(r => r.status === 'sent').length, color: 'bg-green-50 text-green-600', active: 'bg-green-600 text-white shadow-lg shadow-green-200' },
-                { id: 'history', label: 'Histórico', count: null, color: 'bg-indigo-50 text-indigo-600', active: 'bg-indigo-600 text-white shadow-lg shadow-indigo-200' },
-            ].map(tab => (
-                <button
-                    key={tab.id}
-                    onClick={() => setActiveTab(tab.id as DashboardTab)}
-                    className={`px-5 py-3 rounded-xl font-medium transition-all duration-300 flex items-center gap-2 min-w-[120px] justify-center ${
-                        activeTab === tab.id ? tab.active : `${tab.color} hover:bg-opacity-80`
-                    }`}
-                >
-                    {tab.id === 'history' && <History className="w-4 h-4" />}
-                    <span>{tab.label}</span>
-                    {tab.count !== null && (
-                        <span className={`text-xs px-2 py-0.5 rounded-full ${activeTab === tab.id ? 'bg-white/20' : 'bg-black/5'}`}>
-                            {tab.count}
-                        </span>
-                    )}
-                </button>
-            ))}
+        {/* Filters and Search */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+            <div className="flex items-center gap-4 overflow-x-auto pb-2">
+                {[
+                    { id: 'all', label: 'Todos', count: recipients.length, color: 'bg-gray-100 text-gray-600', active: 'bg-gray-800 text-white shadow-lg' },
+                    { id: 'pending', label: 'Aguardando', count: recipients.filter(r => r.status === 'pending').length, color: 'bg-red-50 text-red-600', active: 'bg-red-600 text-white shadow-lg shadow-red-200' },
+                    { id: 'ready', label: 'Prontos', count: recipients.filter(r => r.status === 'ready').length, color: 'bg-yellow-50 text-yellow-700', active: 'bg-yellow-500 text-white shadow-lg shadow-yellow-200' },
+                    { id: 'sent', label: 'Enviados', count: recipients.filter(r => r.status === 'sent').length, color: 'bg-green-50 text-green-600', active: 'bg-green-600 text-white shadow-lg shadow-green-200' },
+                    { id: 'history', label: 'Histórico', count: null, color: 'bg-indigo-50 text-indigo-600', active: 'bg-indigo-600 text-white shadow-lg shadow-indigo-200' },
+                ].map(tab => (
+                    <button
+                        key={tab.id}
+                        onClick={() => setActiveTab(tab.id as DashboardTab)}
+                        className={`px-5 py-3 rounded-xl font-medium transition-all duration-300 flex items-center gap-2 min-w-[120px] justify-center ${
+                            activeTab === tab.id ? tab.active : `${tab.color} hover:bg-opacity-80`
+                        }`}
+                    >
+                        {tab.id === 'history' && <History className="w-4 h-4" />}
+                        <span>{tab.label}</span>
+                        {tab.count !== null && (
+                            <span className={`text-xs px-2 py-0.5 rounded-full ${activeTab === tab.id ? 'bg-white/20' : 'bg-black/5'}`}>
+                                {tab.count}
+                            </span>
+                        )}
+                    </button>
+                ))}
+            </div>
+            
+            {/* Dashboard Search */}
+            {activeTab !== 'history' && (
+                <div className="relative w-full md:w-64">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                    <input 
+                        type="text"
+                        placeholder="Buscar destinatário..."
+                        value={dashboardSearch}
+                        onChange={(e) => setDashboardSearch(e.target.value)}
+                        className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm"
+                    />
+                </div>
+            )}
         </div>
 
         {/* History View */}
@@ -874,12 +974,14 @@ const App: React.FC = () => {
                             <tr>
                                 <th className="px-6 py-4 font-semibold text-gray-700 text-sm">Sigla / Órgão</th>
                                 <th className="px-6 py-4 font-semibold text-gray-700 text-sm">Status</th>
-                                <th className="px-6 py-4 font-semibold text-gray-700 text-sm">Arquivo Identificado</th>
+                                <th className="px-6 py-4 font-semibold text-gray-700 text-sm">Arquivos Identificados</th>
                                 <th className="px-6 py-4 font-semibold text-gray-700 text-sm text-right">Ação</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100">
-                            {displayRecipients.map((recipient) => (
+                            {displayRecipients.map((recipient) => {
+                                const isCaixa = recipient.sigla.toLowerCase().includes('caixa') || recipient.sigla.toLowerCase().includes('jamc');
+                                return (
                                 <tr key={recipient.id} className="hover:bg-gray-50 transition-colors">
                                     <td className="px-6 py-4">
                                         <div className="text-lg font-bold text-gray-900">{recipient.sigla}</div>
@@ -911,20 +1013,56 @@ const App: React.FC = () => {
                                         )}
                                     </td>
                                     <td className="px-6 py-4">
-                                        {recipient.matchedFileName ? (
-                                            <div>
-                                                <div className="flex items-center gap-2 text-sm text-gray-700">
-                                                    <FileIcon className="w-4 h-4 text-gray-400" />
-                                                    <span className="font-mono bg-gray-100 px-1 rounded">{recipient.matchedFileName}</span>
+                                        {/* File Matches Visuals */}
+                                        <div className="space-y-2">
+                                            {isCaixa ? (
+                                                // CAIXA View
+                                                <div className="flex items-center gap-2 text-sm">
+                                                    {recipient.matchedFiles?.some(f => f.service.includes('JAMC')) ? (
+                                                        <CheckCircle className="w-4 h-4 text-green-500 shrink-0" />
+                                                    ) : (
+                                                        <XCircle className="w-4 h-4 text-red-500 shrink-0" />
+                                                    )}
+                                                    <span className="text-xs font-medium text-gray-700">Relatório JAMC</span>
+                                                    {recipient.matchedFiles?.find(f => f.service.includes('JAMC')) && (
+                                                        <span className="font-mono text-[10px] text-gray-500 bg-gray-100 px-1 rounded ml-auto">
+                                                            {recipient.matchedFiles.find(f => f.service.includes('JAMC'))?.fileName}
+                                                        </span>
+                                                    )}
                                                 </div>
-                                                {recipient.matchedTime && (
-                                                    <div className="text-[10px] text-gray-400 mt-1 pl-6">
-                                                        Identificado em: {recipient.matchedTime.toLocaleDateString()} às {recipient.matchedTime.toLocaleTimeString()}
-                                                    </div>
-                                                )}
-                                            </div>
-                                        ) : (
-                                            <span className="text-sm text-gray-300 italic">--</span>
+                                            ) : (
+                                                // General View - Iterate Services
+                                                (recipient.services && recipient.services.length > 0) ? (
+                                                    recipient.services.map((service, idx) => {
+                                                        const match = recipient.matchedFiles?.find(f => f.service === service);
+                                                        return (
+                                                            <div key={idx} className="flex items-center gap-2 text-sm">
+                                                                {match ? (
+                                                                    <CheckCircle className="w-4 h-4 text-green-500 shrink-0" />
+                                                                ) : (
+                                                                    <XCircle className="w-4 h-4 text-red-500 shrink-0" />
+                                                                )}
+                                                                <span className="text-xs font-medium text-gray-700">{service}</span>
+                                                                {match && (
+                                                                    <span className="font-mono text-[10px] text-gray-500 bg-gray-100 px-1 rounded ml-auto truncate max-w-[150px]">
+                                                                        {match.fileName}
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                        );
+                                                    })
+                                                ) : (
+                                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-red-50 text-red-600 border border-red-100">
+                                                        <AlertTriangle className="w-3 h-3" /> Nenhum serviço configurado
+                                                    </span>
+                                                )
+                                            )}
+                                        </div>
+
+                                        {recipient.matchedTime && recipient.status !== 'pending' && (
+                                             <div className="text-[10px] text-gray-400 mt-2 border-t pt-1 w-fit">
+                                                 Atualizado: {recipient.matchedTime.toLocaleDateString()} às {recipient.matchedTime.toLocaleTimeString()}
+                                             </div>
                                         )}
                                     </td>
                                     <td className="px-6 py-4 text-right">
@@ -947,13 +1085,15 @@ const App: React.FC = () => {
                                                 </button>
                                             </div>
                                         ) : (
-                                            <button disabled className="opacity-0 cursor-default">
-                                                -
+                                            <button disabled className="inline-flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-400 text-sm font-medium rounded-lg cursor-not-allowed">
+                                                <Send className="w-4 h-4" />
+                                                Enviar
                                             </button>
                                         )}
                                     </td>
                                 </tr>
-                            ))}
+                            )})
+                            }
                             {displayRecipients.length === 0 && (
                                 <tr>
                                     <td colSpan={4} className="px-6 py-12 text-center text-gray-400">

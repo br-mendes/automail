@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import Papa from 'papaparse';
 import { Recipient } from '../types';
@@ -34,13 +35,17 @@ export const CsvUploader: React.FC<CsvUploaderProps> = ({ onDataLoaded }) => {
         // Simple mapping (assuming columns exist or fuzzy mapping)
         const recipients: Recipient[] = rows.map((row, index) => {
           const agency = row['Orgao'] || row['orgao'] || row['Órgão'] || row['Agency'] || 'Geral';
+          const servicesRaw = row['Servicos'] || row['servicos'] || row['Services'] || '';
+          const services = servicesRaw ? servicesRaw.split(';').map((s: string) => s.trim()).filter((s: string) => s.length > 0) : [];
+
           return {
             id: `rec-${index}`,
             name: row['Nome'] || row['nome'] || row['Name'] || 'Desconhecido',
             agency: agency,
             sigla: agency,
             email: row['Email'] || row['email'] || row['E-mail'] || '',
-            status: 'pending' as const
+            status: 'pending' as const,
+            services: services
           };
         }).filter(r => r.email && r.name !== 'Desconhecido');
 
