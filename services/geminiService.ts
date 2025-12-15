@@ -1,7 +1,7 @@
 
 
 import { GoogleGenAI } from "@google/genai";
-import { EmailGenerationResponse } from "../types";
+import { EmailGenerationResponse, SignatureConfig } from "../types";
 import { COMPANY_LOGO_URL } from "../constants";
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
@@ -52,7 +52,7 @@ const formatServicesList = (services: string[]): string => {
 
 /**
  * Strict match logic.
- * CAIXA: Must match "JAMC_15762_2020"
+ * CAIXA: Must match "JAMC_7490_2025"
  * General: Must match Sigla + Service
  */
 export const findKeywordMatch = (
@@ -72,9 +72,9 @@ export const findKeywordMatch = (
     const candidate = files.find(fileName => {
         const normFileName = normalizeText(fileName);
         
-        // CAIXA Strict Rule: Must contain JAMC_15762_2020
+        // CAIXA Strict Rule: Must contain JAMC_7490_2025
         if (isCaixa || isCaixaSigla) {
-            return normFileName.includes("jamc") && normFileName.includes("15762") && normFileName.includes("2020");
+            return normFileName.includes("jamc") && normFileName.includes("7490") && normFileName.includes("2025");
         }
 
         // General Strict Rule: Must contain Sigla AND Service Name
@@ -107,14 +107,15 @@ export const generateEmailContent = async (
   agencySigla: string,
   // matchedFiles is passed for context if needed, though mostly for validation logic outside
   fileName: string, 
-  services: string[] = []
+  services: string[] = [],
+  signatureConfig?: SignatureConfig
 ): Promise<EmailGenerationResponse> => {
   // 1. Get Date Info
   const date = new Date();
   const monthName = date.toLocaleString('pt-BR', { month: 'long' });
   const year = date.getFullYear();
 
-  // 2. Sort Services: "Chamados" or "Relatório de Chamados" should be last
+  // 2. Sort Services: "Relatório de Chamados" (or just "Chamados") should be last
   const sortedServices = [...services].sort((a, b) => {
       const aLower = a.toLowerCase();
       const bLower = b.toLowerCase();
@@ -140,7 +141,45 @@ export const generateEmailContent = async (
   let overrideTo: string | undefined;
   let overrideCc: string | undefined;
 
-  const signatureUrl = COMPANY_LOGO_URL;
+  // --- SIGNATURES GENERATION ---
+  
+  // Default values if config is missing (fallback)
+  const sigName = signatureConfig?.name || 'Seu Nome';
+  const sigRole = signatureConfig?.role || '';
+  const sigEmail = signatureConfig?.email || 'email@petacorp.com.br';
+  const sigPhone = signatureConfig?.phone || '';
+  const sigAddr = signatureConfig?.address || 'SCES, Trecho 2, Conj. 8, Loja 3 – Brasília/DF – CEP: 70.200-002';
+  const sigSite = signatureConfig?.website || 'www.petacorp.com.br';
+  
+  const fontMain = signatureConfig?.fontSizeName || '11pt';
+  const fontDetails = signatureConfig?.fontSizeDetails || '9pt';
+  const isBold = signatureConfig?.isNameBold ?? true;
+  // Use Calibri stack
+  const fontFamily = "Calibri, Candara, Segoe, 'Segoe UI', Optima, Arial, sans-serif";
+
+  // Plain Text Signature (for mailto)
+  const textSignature = `${sigName}
+${sigRole}
+
+${sigPhone ? sigPhone + '\n' : ''}${sigEmail}
+Endereço: ${sigAddr}
+${sigSite}`;
+
+  // HTML Signature (for preview/future use)
+  const htmlSignature = `
+    <div style="font-family: ${fontFamily}; margin-top: 20px;">
+      <div style="font-size: ${fontMain}; color: #000;">
+        <span style="font-weight: ${isBold ? 'bold' : 'normal'};">${sigName}</span><br>
+        ${sigRole ? `<span style="font-style: ${signatureConfig?.isRoleItalic ? 'italic' : 'normal'}">${sigRole}</span>` : ''}
+      </div>
+      <div style="font-size: ${fontDetails}; color: #666666; margin-top: 10px;">
+        ${sigPhone ? `${sigPhone}<br>` : ''}
+        ${sigEmail}<br>
+        Endereço: ${sigAddr}<br>
+        <a href="http://${sigSite.replace('http://', '').replace('https://', '')}" style="color: #666666; text-decoration: none;">${sigSite}</a>
+      </div>
+    </div>
+  `;
 
   if (isCaixa) {
     // --- CAIXA LOGIC ---
@@ -149,8 +188,8 @@ export const generateEmailContent = async (
     const lastDay = new Date(year, date.getMonth() + 1, 0).getDate();
     const monthYearFormatted = `${monthName.charAt(0).toUpperCase() + monthName.slice(1)}/${year}`;
     
-    // Subject: Relatório de chamados_JAMC_[Mês/Ano]_Contrato15762/2020
-    subject = `Relatório de chamados_JAMC_${monthYearFormatted}_Contrato 15762/2020`;
+    // Subject: Relatório de chamados_JAMC_[Mês/Ano]_Contrato7490/2025
+    subject = `Relatório de chamados_JAMC_${monthYearFormatted}_Contrato 7490/2025`;
 
     // Body
     const preposition = determineArticle("Caixa Econômica Federal");
@@ -158,24 +197,21 @@ export const generateEmailContent = async (
     const bodyContent = `
 Pelo presente, informamos que, no período de 1º a ${lastDay} de ${monthName} de ${year}, não foram identificados chamados de suporte por meio do canal https://www.veritas.com/support/.
 
-Esses chamados referem-se ao serviço de suporte técnico e atualização tecnológica do produto Veritas Infoscale Storage, conforme especificado no Contrato nº 15762/2020.
+Esses chamados referem-se ao serviço de suporte técnico e atualização tecnológica do produto Veritas Infoscale Storage, conforme especificado no Contrato nº 7490/2025.
 
 Agradecemos antecipadamente pela atenção dispensada a este assunto e aguardamos, gentilmente, a emissão do ateste correspondente, que certificará a conformidade do registro de chamados com os termos estabelecidos em contrato.
 
 Ficamos à disposição para eventuais esclarecimentos.`;
 
     bodyHtml = `
-      <div style="font-family: sans-serif; color: #000;">
+      <div style="font-family: ${fontFamily}; color: #000;">
         <p>${preposition}<br><strong>Caixa Econômica Federal</strong>,</p>
         <br>
         <p>Prezados(as) Senhores(as),</p>
         <div style="white-space: pre-line;">${bodyContent}</div>
         <br>
         <p>Atenciosamente,</p>
-        <br>
-        <img src="${signatureUrl}" alt="Logo Petacorp" style="max-width: 200px; height: auto;" />
-        <br>
-        <a href="${signatureUrl}">${signatureUrl}</a>
+        ${htmlSignature}
       </div>
     `;
 
@@ -187,7 +223,7 @@ ${bodyContent}
 
 Atenciosamente,
 
-${signatureUrl}`;
+${textSignature}`;
 
   } else {
     // --- GENERAL LOGIC ---
@@ -224,17 +260,14 @@ ${signatureUrl}`;
 Colocamo-nos à disposição para quaisquer esclarecimentos que se fizerem necessários.`;
 
     bodyHtml = `
-      <div style="font-family: sans-serif; color: #000;">
+      <div style="font-family: ${fontFamily}; color: #000;">
         <p>${preposition}<br><strong>${recipientName}</strong>,</p>
         <br>
         <p>Prezados(as) Senhores(as),</p>
         <div style="white-space: pre-line;">${bodyContent}</div>
         <br>
         <p>Atenciosamente,</p>
-        <br>
-        <img src="${signatureUrl}" alt="Logo Petacorp" style="max-width: 200px; height: auto;" />
-        <br>
-        <a href="${signatureUrl}">${signatureUrl}</a>
+        ${htmlSignature}
       </div>
     `;
 
@@ -247,7 +280,7 @@ ${bodyContent}
 
 Atenciosamente,
 
-${signatureUrl}`;
+${textSignature}`;
   }
 
   return Promise.resolve({

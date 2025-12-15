@@ -1,12 +1,13 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { FolderOpen, RefreshCw, Send, CheckCircle, Clock, File as FileIcon, Search, AlertTriangle, RotateCcw, Zap, Settings, X, CalendarClock, Timer, Users, Mail, ArrowLeft, LayoutDashboard, History, ChevronRight, Filter, MonitorPlay, Trash2, XCircle, ArrowUp, AlertCircle } from 'lucide-react';
-import { AppState, Client, Recipient, FileEntry, AutoScanConfig, SentLog, DashboardTab } from './types';
+import { FolderOpen, RefreshCw, Send, CheckCircle, Clock, File as FileIcon, Search, AlertTriangle, RotateCcw, Zap, Settings, X, CalendarClock, Timer, Users, Mail, ArrowLeft, LayoutDashboard, History, ChevronRight, Filter, MonitorPlay, Trash2, XCircle, ArrowUp, AlertCircle, PenTool } from 'lucide-react';
+import { AppState, Client, Recipient, FileEntry, AutoScanConfig, SentLog, DashboardTab, SignatureConfig } from './types';
 import { ClientManager } from './components/ClientManager';
 import { generateEmailContent, findKeywordMatch } from './services/geminiService';
 import { COMPANY_LOGO_URL } from './constants';
 import { ToastProvider, useToast } from './components/ToastProvider';
 import { ConfirmModal } from './components/ConfirmModal';
+import { SettingsModal } from './components/SettingsModal';
 
 const AppContent: React.FC = () => {
   const { addToast } = useToast();
@@ -20,6 +21,20 @@ const AppContent: React.FC = () => {
   // Settings
   const [globalCC, setGlobalCC] = useState<string>("suporte-gerencial@petacorp.com.br; financeiro@petacorp.com.br");
   const [scanConfig, setScanConfig] = useState<AutoScanConfig>({ mode: 'disabled', intervalMinutes: 30 });
+  const [signatureConfig, setSignatureConfig] = useState<SignatureConfig>({
+      name: '',
+      role: '',
+      email: '',
+      phone: '',
+      address: 'SCES, Trecho 2, Conj. 8, Loja 3 – Brasília/DF – CEP: 70.200-002',
+      website: 'www.petacorp.com.br',
+      fontFamily: 'Calibri, sans-serif',
+      fontSizeName: '11pt',
+      fontSizeDetails: '9pt',
+      isNameBold: true,
+      isRoleItalic: false
+  });
+
   const [showSettings, setShowSettings] = useState(false);
   const [activeTab, setActiveTab] = useState<DashboardTab>('all');
   const [dashboardSearch, setDashboardSearch] = useState('');
@@ -97,6 +112,7 @@ const AppContent: React.FC = () => {
     const savedCC = localStorage.getItem('petacorp_cc');
     const savedHistory = localStorage.getItem('petacorp_history');
     const savedScanConfig = localStorage.getItem('petacorp_scan_config');
+    const savedSignature = localStorage.getItem('petacorp_signature');
     
     if (savedClients) {
       try {
@@ -115,6 +131,12 @@ const AppContent: React.FC = () => {
     if (savedScanConfig) {
         try {
             setScanConfig(JSON.parse(savedScanConfig));
+        } catch(e) {}
+    }
+
+    if (savedSignature) {
+        try {
+            setSignatureConfig(JSON.parse(savedSignature));
         } catch(e) {}
     }
     
@@ -139,6 +161,10 @@ const AppContent: React.FC = () => {
   useEffect(() => {
     localStorage.setItem('petacorp_scan_config', JSON.stringify(scanConfig));
   }, [scanConfig]);
+  
+  useEffect(() => {
+    localStorage.setItem('petacorp_signature', JSON.stringify(signatureConfig));
+  }, [signatureConfig]);
 
   useEffect(() => {
     localStorage.setItem('petacorp_history', JSON.stringify(sentHistory));
@@ -235,7 +261,7 @@ const AppContent: React.FC = () => {
   // Fallback Scan for File Input (Compatibility Mode)
   const handleFallbackFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
       if (event.target.files && event.target.files.length > 0) {
-          const fileList = Array.from(event.target.files);
+          const fileList: File[] = Array.from(event.target.files);
           const newFiles: FileEntry[] = fileList.map(f => ({ name: f.name, handle: f, timestamp: f.lastModified }));
           
           const signature = newFiles.map(f => f.name).sort().join('|');
@@ -426,7 +452,7 @@ const AppContent: React.FC = () => {
         };
 
         if (isCaixa) {
-            // CAIXA Rule: Strictly match JAMC_15762_2020
+            // CAIXA Rule: Strictly match JAMC_7490_2025
             const match = findKeywordMatch(r.name, r.sigla, "", fileNames);
             if (match) {
                 const ts = await getFileTimestamp(match);
@@ -511,7 +537,8 @@ const AppContent: React.FC = () => {
         // Use the first matched file name for reference
         const primaryFile = target.matchedFiles && target.matchedFiles.length > 0 ? target.matchedFiles[0].fileName : '';
         
-        const content = await generateEmailContent(target.name, target.sigla, primaryFile, target.services);
+        // PASS SIGNATURE CONFIG TO GENERATOR
+        const content = await generateEmailContent(target.name, target.sigla, primaryFile, target.services, signatureConfig);
         
         updatedRecipients[index] = {
             ...updatedRecipients[index],
@@ -528,7 +555,7 @@ const AppContent: React.FC = () => {
     };
 
     generateContent();
-  }, [recipients]);
+  }, [recipients, signatureConfig]); // Re-generate if signature changes
 
 
   // Helpers
@@ -602,9 +629,36 @@ const AppContent: React.FC = () => {
     });
   };
 
-  const handleSaveSettings = () => {
+  const handleSaveSettings = (
+      newSigConfig: SignatureConfig, 
+      newScanConfig: AutoScanConfig, 
+      newGlobalCC: string
+  ) => {
+      if (!newSigConfig.name || !newSigConfig.email) {
+          addToast('error', "Nome e E-mail são obrigatórios na assinatura.");
+          return;
+      }
+      
+      setSignatureConfig(newSigConfig);
+      setScanConfig(newScanConfig);
+      setGlobalCC(newGlobalCC);
+
+      // Force regeneration of ready emails to apply new signature
+      setRecipients(prev => prev.map(r => {
+          if (r.status === 'ready' || r.status === 'file_found') {
+              return { 
+                  ...r, 
+                  status: 'file_found', 
+                  emailBody: undefined, 
+                  emailSubject: undefined, 
+                  emailBodyHtml: undefined 
+              };
+          }
+          return r;
+      }));
+
       setShowSettings(false);
-      addToast('success', "Configurações salvas com sucesso.");
+      addToast('success', "Configurações salvas e aplicadas.");
   };
 
   // Filtered List
@@ -882,140 +936,14 @@ const AppContent: React.FC = () => {
       )}
       
       {/* Settings Modal */}
-      {showSettings && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden animate-in fade-in zoom-in duration-200 flex flex-col max-h-[90vh]">
-            <div className="flex justify-between items-center p-5 border-b bg-gray-50">
-              <h3 className="text-xl font-bold text-gray-800 flex items-center gap-2">
-                <div className="p-2 bg-blue-100 rounded-lg"><Settings className="w-5 h-5 text-blue-600" /></div>
-                Configurações
-              </h3>
-              <button onClick={() => setShowSettings(false)} className="text-gray-400 hover:text-red-500 transition">
-                <X className="w-6 h-6" />
-              </button>
-            </div>
-            
-            <div className="p-6 space-y-8 overflow-y-auto">
-              {/* Settings Content */}
-              <div className="space-y-3">
-                <h4 className="text-sm font-bold text-gray-500 uppercase tracking-wider flex items-center gap-2">
-                    <Mail className="w-4 h-4" />
-                    Destinatários Cópia (CC) - Padrão Geral
-                </h4>
-                <div className="bg-blue-50 border border-blue-100 p-4 rounded-lg">
-                    <p className="text-xs text-blue-700 mb-2">
-                        Estes e-mails serão adicionados automaticamente em Cópia em disparos normais (exceto quando houver regra específica do cliente).
-                        <br/>
-                        <span className="opacity-75">Use <strong>ponto e vírgula (;)</strong> para separar múltiplos e-mails (Padrão Outlook).</span>
-                    </p>
-                    <textarea 
-                        value={globalCC}
-                        onChange={(e) => setGlobalCC(e.target.value)}
-                        placeholder="email1@petacorp.com.br; email2@petacorp.com.br"
-                        className="w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-3 border text-sm h-20"
-                    />
-                </div>
-              </div>
-              
-              <hr className="border-gray-100" />
-
-              <div className="space-y-3">
-                  <h4 className="text-sm font-bold text-gray-500 uppercase tracking-wider flex items-center gap-2">
-                    <Clock className="w-4 h-4" />
-                    Rotina de Varredura
-                  </h4>
-                  <p className="text-xs text-gray-500 mb-2">Defina com que frequência o sistema deve buscar novos arquivos na pasta selecionada.</p>
-                  
-                  <div className="grid grid-cols-1 gap-3">
-                    {/* Manual Mode */}
-                    <button
-                        onClick={() => setScanConfig({ ...scanConfig, mode: 'disabled' })}
-                        className={`p-4 rounded-xl border text-left flex items-start gap-3 transition-all ${
-                            scanConfig.mode === 'disabled' 
-                            ? 'bg-gray-800 text-white border-gray-800 shadow-lg' 
-                            : 'bg-white border-gray-200 hover:border-gray-300 text-gray-600'
-                        }`}
-                    >
-                        <div className={`mt-0.5 w-5 h-5 rounded-full border flex items-center justify-center shrink-0 ${scanConfig.mode === 'disabled' ? 'border-white' : 'border-gray-300'}`}>
-                            {scanConfig.mode === 'disabled' && <div className="w-2.5 h-2.5 rounded-full bg-white" />}
-                        </div>
-                        <div>
-                            <span className="font-bold block text-sm">Manual (Padrão)</span>
-                            <span className={`text-xs ${scanConfig.mode === 'disabled' ? 'text-gray-300' : 'text-gray-400'}`}>
-                                A busca só ocorre quando você clica no botão atualizar ou troca de pasta.
-                            </span>
-                        </div>
-                    </button>
-
-                    {/* Interval Mode */}
-                    <button
-                        onClick={() => setScanConfig({ ...scanConfig, mode: 'interval' })}
-                        className={`p-4 rounded-xl border text-left flex items-start gap-3 transition-all ${
-                            scanConfig.mode === 'interval' 
-                            ? 'bg-blue-600 text-white border-blue-600 shadow-lg shadow-blue-200' 
-                            : 'bg-white border-gray-200 hover:border-blue-200 text-gray-600'
-                        }`}
-                    >
-                        <div className={`mt-0.5 w-5 h-5 rounded-full border flex items-center justify-center shrink-0 ${scanConfig.mode === 'interval' ? 'border-white' : 'border-gray-300'}`}>
-                            {scanConfig.mode === 'interval' && <div className="w-2.5 h-2.5 rounded-full bg-white" />}
-                        </div>
-                        <div className="w-full">
-                            <span className="font-bold block text-sm flex justify-between items-center w-full">
-                                Intervalos Regulares
-                                {scanConfig.mode === 'interval' && (
-                                     <select 
-                                        value={scanConfig.intervalMinutes}
-                                        onChange={(e) => setScanConfig({ ...scanConfig, intervalMinutes: Number(e.target.value) })}
-                                        className="text-xs text-blue-800 bg-white border-none rounded py-0.5 pl-2 pr-6 cursor-pointer focus:ring-0"
-                                        onClick={(e) => e.stopPropagation()}
-                                    >
-                                        <option value={5}>5 min</option>
-                                        <option value={10}>10 min</option>
-                                        <option value={30}>30 min</option>
-                                        <option value={60}>1 hora</option>
-                                    </select>
-                                )}
-                            </span>
-                            <span className={`text-xs ${scanConfig.mode === 'interval' ? 'text-blue-100' : 'text-gray-400'}`}>
-                                Busca novos arquivos a cada X minutos automaticamente.
-                            </span>
-                        </div>
-                    </button>
-
-                    {/* Fixed Mode */}
-                    <button
-                        onClick={() => setScanConfig({ ...scanConfig, mode: 'fixed' })}
-                        className={`p-4 rounded-xl border text-left flex items-start gap-3 transition-all ${
-                            scanConfig.mode === 'fixed' 
-                            ? 'bg-indigo-600 text-white border-indigo-600 shadow-lg shadow-indigo-200' 
-                            : 'bg-white border-gray-200 hover:border-indigo-200 text-gray-600'
-                        }`}
-                    >
-                        <div className={`mt-0.5 w-5 h-5 rounded-full border flex items-center justify-center shrink-0 ${scanConfig.mode === 'fixed' ? 'border-white' : 'border-gray-300'}`}>
-                            {scanConfig.mode === 'fixed' && <div className="w-2.5 h-2.5 rounded-full bg-white" />}
-                        </div>
-                        <div>
-                            <span className="font-bold block text-sm flex items-center gap-2">
-                                Horários Fixos
-                                {scanConfig.mode === 'fixed' && <span className="bg-indigo-500 text-xs px-2 py-0.5 rounded-full">Ativo</span>}
-                            </span>
-                            <span className={`text-xs ${scanConfig.mode === 'fixed' ? 'text-indigo-100' : 'text-gray-400'}`}>
-                                Executa a varredura automaticamente às <strong>08:00, 12:00 e 16:00</strong>.
-                            </span>
-                        </div>
-                    </button>
-                  </div>
-              </div>
-            </div>
-
-            <div className="p-5 border-t bg-gray-50 flex justify-end gap-3">
-              <button onClick={handleSaveSettings} className="px-6 py-2.5 bg-gray-800 text-white font-medium rounded-lg hover:bg-gray-900 transition shadow-lg">
-                Salvar Configurações
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <SettingsModal 
+        isOpen={showSettings}
+        onClose={() => setShowSettings(false)}
+        onSave={handleSaveSettings}
+        initialSignature={signatureConfig}
+        initialScan={scanConfig}
+        initialCC={globalCC}
+      />
 
       {/* Header */}
       <header className="bg-white border-b sticky top-0 z-10 shadow-sm">

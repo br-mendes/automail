@@ -25,6 +25,21 @@ export interface User {
   isAuthenticated: boolean;
 }
 
+export interface SignatureConfig {
+  name: string;
+  role: string;
+  email: string;
+  phone: string;
+  address: string;
+  website: string;
+  // Style Options
+  fontFamily: string;
+  fontSizeName: string; // e.g. "11pt"
+  fontSizeDetails: string; // e.g. "9pt"
+  isNameBold: boolean;
+  isRoleItalic: boolean;
+}
+
 export interface Recipient extends Client {
   status: 'pending' | 'file_found' | 'ready' | 'sent';
   // matchedFileName is deprecated in favor of matchedFiles for multi-service support
