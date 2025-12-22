@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { FolderOpen, RefreshCw, Send, CheckCircle, Clock, File as FileIcon, Search, AlertTriangle, RotateCcw, Zap, Settings, X, CalendarClock, Timer, Users, Mail, ArrowLeft, LayoutDashboard, History, ChevronRight, Filter, MonitorPlay, Trash2, XCircle, ArrowUp, AlertCircle, PenTool } from 'lucide-react';
+import { FolderOpen, RefreshCw, Send, CheckCircle, Clock, File as FileIcon, Search, AlertTriangle, RotateCcw, Zap, Settings, X, CalendarClock, Timer, Users, Mail, ArrowLeft, LayoutDashboard, History, ChevronRight, Filter, MonitorPlay, Trash2, XCircle, ArrowUp, AlertCircle, PenTool, Terminal as TerminalIcon } from 'lucide-react';
 import { AppState, Client, Recipient, FileEntry, AutoScanConfig, SentLog, DashboardTab, SignatureConfig } from './types';
 import { ClientManager } from './components/ClientManager';
 import { generateEmailContent, findKeywordMatch } from './services/geminiService';
@@ -8,6 +8,7 @@ import { COMPANY_LOGO_URL } from './constants';
 import { ToastProvider, useToast } from './components/ToastProvider';
 import { ConfirmModal } from './components/ConfirmModal';
 import { SettingsModal } from './components/SettingsModal';
+import { CLIOverlay } from './components/CLIOverlay';
 
 const AppContent: React.FC = () => {
   const { addToast } = useToast();
@@ -36,6 +37,7 @@ const AppContent: React.FC = () => {
   });
 
   const [showSettings, setShowSettings] = useState(false);
+  const [showCLI, setShowCLI] = useState(false);
   const [activeTab, setActiveTab] = useState<DashboardTab>('all');
   const [dashboardSearch, setDashboardSearch] = useState('');
 
@@ -82,6 +84,24 @@ const AppContent: React.FC = () => {
   const scrollToTop = () => {
       window.scrollTo({ top: 0, behavior: 'smooth' });
   };
+
+  // Keyboard Shortcuts Handler
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+        // Toggle CLI: Ctrl+K or "/" when not typing in an input
+        if ((e.ctrlKey && e.key === 'k') || (e.key === '/' && (document.activeElement?.tagName !== 'INPUT' && document.activeElement?.tagName !== 'TEXTAREA'))) {
+            e.preventDefault();
+            setShowCLI(prev => !prev);
+        }
+        // ESC to close anything
+        if (e.key === 'Escape') {
+            setShowCLI(false);
+            setShowSettings(false);
+        }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   // Helper to normalize clients by merging same Sigla
   const normalizeAndMergeClients = (clientList: Client[]): Client[] => {
@@ -228,7 +248,7 @@ const AppContent: React.FC = () => {
 
               } catch (folderErr) {
                   console.error(`Error scanning folder ${folder.name}`, folderErr);
-                  addToast('warning', `Não foi possível ler a pasta "${folder.name}". Verifique as permissões.`);
+                  addToast('warning', `Não foi possível ler a pasta "${folder.name}". Verifique as semicolons.`);
               }
           }
 
@@ -701,6 +721,27 @@ const AppContent: React.FC = () => {
             </button>
         )}
 
+        {/* Floating CLI Toggle Button */}
+        <button 
+            onClick={() => setShowCLI(true)}
+            className="fixed bottom-6 left-6 p-3 bg-gray-900 text-white rounded-full shadow-xl hover:bg-black transition z-50 flex items-center gap-2 group overflow-hidden"
+            title="Abrir CLI (Ctrl+K)"
+        >
+            <TerminalIcon className="w-5 h-5" />
+            <span className="max-w-0 group-hover:max-w-xs transition-all duration-500 overflow-hidden whitespace-nowrap text-xs font-mono uppercase tracking-tighter pr-1">CLI / Console</span>
+        </button>
+
+        <CLIOverlay 
+            isOpen={showCLI}
+            onClose={() => setShowCLI(false)}
+            appState={appState}
+            setAppState={setAppState}
+            clients={clients}
+            files={files}
+            onScan={scanAllFolders}
+            onOpenSettings={() => setShowSettings(true)}
+        />
+
         <div className="max-w-4xl w-full bg-white rounded-2xl shadow-xl overflow-hidden flex flex-col md:flex-row min-h-[500px]">
             {/* Left/Top Branding Side */}
             <div className="bg-gradient-to-br from-gray-900 to-blue-900 p-12 flex flex-col justify-center items-center md:items-start md:w-5/12 text-center md:text-left text-white border-r border-gray-800">
@@ -718,7 +759,7 @@ const AppContent: React.FC = () => {
                         rel="noopener noreferrer"
                         className="hover:text-white transition-colors border-b border-transparent hover:border-white pb-0.5"
                     >
-                        Versão 2.6 • Petacorp
+                        Versão 2.7 • Petacorp
                     </a>
                  </div>
             </div>
@@ -767,6 +808,16 @@ const AppContent: React.FC = () => {
   if (appState === AppState.MANAGE_CLIENTS) {
     return (
         <div className="relative">
+            <CLIOverlay 
+                isOpen={showCLI}
+                onClose={() => setShowCLI(false)}
+                appState={appState}
+                setAppState={setAppState}
+                clients={clients}
+                files={files}
+                onScan={scanAllFolders}
+                onOpenSettings={() => setShowSettings(true)}
+            />
             <ClientManager 
                 clients={clients} 
                 onUpdateClients={setClients} 
@@ -790,6 +841,16 @@ const AppContent: React.FC = () => {
   if (appState === AppState.SELECT_FOLDER) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 relative p-4">
+        <CLIOverlay 
+            isOpen={showCLI}
+            onClose={() => setShowCLI(false)}
+            appState={appState}
+            setAppState={setAppState}
+            clients={clients}
+            files={files}
+            onScan={scanAllFolders}
+            onOpenSettings={() => setShowSettings(true)}
+        />
         {showScrollTop && (
             <button 
                 onClick={scrollToTop}
@@ -916,6 +977,16 @@ const AppContent: React.FC = () => {
   // 4. DASHBOARD (DEFAULT)
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col relative">
+      <CLIOverlay 
+            isOpen={showCLI}
+            onClose={() => setShowCLI(false)}
+            appState={appState}
+            setAppState={setAppState}
+            clients={clients}
+            files={files}
+            onScan={scanAllFolders}
+            onOpenSettings={() => setShowSettings(true)}
+      />
       <ConfirmModal 
         isOpen={confirmModal.isOpen}
         title={confirmModal.title}
@@ -965,6 +1036,7 @@ const AppContent: React.FC = () => {
           
           <div className="flex items-center gap-4">
              <div className="flex items-center gap-2 border-l pl-4 ml-2">
+                <button onClick={() => setShowCLI(true)} className="p-2 rounded-full hover:bg-indigo-50 text-indigo-600 transition" title="Console CLI (Ctrl+K)"><TerminalIcon className="w-5 h-5" /></button>
                 <button onClick={() => setAppState(AppState.SELECT_FOLDER)} className="p-2 rounded-full hover:bg-indigo-50 text-indigo-600 transition" title="Pastas"><FolderOpen className="w-5 h-5" /></button>
                 <button onClick={() => setAppState(AppState.HOME)} className="p-2 rounded-full hover:bg-gray-100 text-gray-600 transition" title="Início"><ArrowLeft className="w-5 h-5" /></button>
                 <button onClick={() => setAppState(AppState.MANAGE_CLIENTS)} className="p-2 rounded-full hover:bg-gray-100 text-gray-600 transition hidden sm:block" title="Gerenciar Clientes"><Users className="w-5 h-5" /></button>
@@ -1077,7 +1149,7 @@ const AppContent: React.FC = () => {
                         placeholder="Buscar destinatário..."
                         value={dashboardSearch}
                         onChange={(e) => setDashboardSearch(e.target.value)}
-                        className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm"
+                        className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-lg text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm bg-white"
                     />
                 </div>
             )}
