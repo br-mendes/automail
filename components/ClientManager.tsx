@@ -255,7 +255,7 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ clients, onUpdateC
                     <select
                         value={filterService}
                         onChange={(e) => setFilterService(e.target.value)}
-                        className="w-full pl-9 pr-8 py-2.5 border border-gray-200 rounded-lg text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none bg-white shadow-sm"
+                        className="w-full pl-9 pr-8 py-2.5 border border-gray-200 rounded-lg text-sm text-black font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none bg-white shadow-sm"
                     >
                         <option value="">Todos Serviços</option>
                         {AVAILABLE_SERVICES.map(s => <option key={s} value={s}>{s}</option>)}
@@ -263,7 +263,7 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ clients, onUpdateC
                 </div>
                 <div className="relative w-full md:w-2/3">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                    <input type="text" placeholder="Buscar cliente..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full pl-9 pr-4 py-2.5 border border-gray-200 rounded-lg text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm bg-white" />
+                    <input type="text" placeholder="Buscar cliente..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full pl-9 pr-4 py-2.5 border border-gray-200 rounded-lg text-sm text-black font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm bg-white" />
                 </div>
             </div>
 
@@ -301,15 +301,15 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ clients, onUpdateC
             <div className="grid grid-cols-1 md:grid-cols-12 gap-5 items-start">
                 <div className="md:col-span-2">
                     <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Sigla</label>
-                    <input type="text" placeholder="Ex: JFAL" value={newClient.sigla} onChange={handleSiglaChange} className="w-full rounded-xl border-gray-200 text-gray-900 focus:border-blue-500 focus:ring-2 focus:ring-blue-500 p-3 border text-sm uppercase bg-white outline-none shadow-sm" />
+                    <input type="text" placeholder="Ex: JFAL" value={newClient.sigla} onChange={handleSiglaChange} className="w-full rounded-xl border-gray-200 text-black font-bold focus:border-blue-500 focus:ring-2 focus:ring-blue-500 p-3 border text-sm uppercase bg-white outline-none shadow-sm" />
                 </div>
                 <div className="md:col-span-5">
                     <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Nome Completo do Órgão</label>
-                    <input type="text" placeholder="Ex: Justiça Federal de Alagoas" value={newClient.name} onChange={e => setNewClient({...newClient, name: e.target.value})} className="w-full rounded-xl border-gray-200 text-gray-900 focus:border-blue-500 focus:ring-2 focus:ring-blue-500 p-3 border text-sm bg-white outline-none shadow-sm" />
+                    <input type="text" placeholder="Ex: Justiça Federal de Alagoas" value={newClient.name} onChange={e => setNewClient({...newClient, name: e.target.value})} className="w-full rounded-xl border-gray-200 text-black font-bold focus:border-blue-500 focus:ring-2 focus:ring-blue-500 p-3 border text-sm bg-white outline-none shadow-sm" />
                 </div>
                 <div className="md:col-span-5">
                     <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">E-mails (Separar com ;)</label>
-                    <input type="text" placeholder="nome@orgao.gov.br; cc@orgao.gov.br" value={newClient.email} onChange={e => setNewClient({...newClient, email: e.target.value})} className="w-full rounded-xl border-gray-200 text-gray-900 focus:border-blue-500 focus:ring-2 focus:ring-blue-500 p-3 border text-sm bg-white outline-none shadow-sm" />
+                    <input type="text" placeholder="nome@orgao.gov.br; cc@orgao.gov.br" value={newClient.email} onChange={e => setNewClient({...newClient, email: e.target.value})} className="w-full rounded-xl border-gray-200 text-black font-medium focus:border-blue-500 focus:ring-2 focus:ring-blue-500 p-3 border text-sm bg-white outline-none shadow-sm" />
                 </div>
                 
                 <div className="md:col-span-12">
@@ -329,7 +329,7 @@ export const ClientManager: React.FC<ClientManagerProps> = ({ clients, onUpdateC
 
                 <div className="md:col-span-12">
                     <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Observações Internas</label>
-                    <textarea rows={2} placeholder="Ex: Contato preferencial com a TI..." value={newClient.notes} onChange={e => setNewClient({...newClient, notes: e.target.value})} className="w-full rounded-xl border-gray-200 text-gray-900 focus:border-blue-500 focus:ring-2 focus:ring-blue-500 p-3 border text-sm bg-white outline-none shadow-sm resize-none" />
+                    <textarea rows={2} placeholder="Ex: Contato preferencial com a TI..." value={newClient.notes} onChange={e => setNewClient({...newClient, notes: e.target.value})} className="w-full rounded-xl border-gray-200 text-black font-medium focus:border-blue-500 focus:ring-2 focus:ring-blue-500 p-3 border text-sm bg-white outline-none shadow-sm resize-none" />
                 </div>
 
                 <div className="md:col-span-12">

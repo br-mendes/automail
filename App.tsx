@@ -1149,7 +1149,7 @@ const AppContent: React.FC = () => {
                         placeholder="Buscar destinatário..."
                         value={dashboardSearch}
                         onChange={(e) => setDashboardSearch(e.target.value)}
-                        className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-lg text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm bg-white"
+                        className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-lg text-sm text-black font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm bg-white"
                     />
                 </div>
             )}
@@ -1363,7 +1363,7 @@ const AppContent: React.FC = () => {
 
       {/* Footer */}
       <footer className="bg-white border-t py-6 mt-auto">
-        <div className="max-w-7xl mx-auto px-4 text-center text-sm text-gray-400">
+        <div className="max-w-7xl auto px-4 text-center text-sm text-gray-400">
             Powered by Gemini AI • React FS Access API
         </div>
       </footer>

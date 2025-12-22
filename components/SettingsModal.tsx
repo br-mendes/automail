@@ -70,7 +70,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         {/* Header */}
         <div className="flex justify-between items-center p-5 border-b shrink-0">
           <h3 className="text-xl font-bold text-gray-800 flex items-center gap-2">
-            <div className="p-2 bg-blue-50 rounded-lg"><Settings className="w-5 h-5 text-blue-600" /></div>
+            <div className="p-2 bg-blue-100 rounded-lg"><Settings className="w-5 h-5 text-blue-600" /></div>
             Configurações
           </h3>
           <button onClick={onClose} className="text-gray-400 hover:text-red-500 transition">
@@ -117,7 +117,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                 type="text" 
                                 value={sigConfig.name} 
                                 onChange={e => setSigConfig({...sigConfig, name: e.target.value})} 
-                                className="w-full border border-gray-200 rounded-lg text-sm p-2.5 bg-white text-gray-900 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition shadow-sm" 
+                                className="w-full border border-gray-200 rounded-lg text-sm p-2.5 bg-white text-black font-medium focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition shadow-sm" 
                                 placeholder="Seu Nome" 
                            />
                        </div>
@@ -127,7 +127,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                 type="text" 
                                 value={sigConfig.role} 
                                 onChange={e => setSigConfig({...sigConfig, role: e.target.value})} 
-                                className="w-full border border-gray-200 rounded-lg text-sm p-2.5 bg-white text-gray-900 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition shadow-sm" 
+                                className="w-full border border-gray-200 rounded-lg text-sm p-2.5 bg-white text-black font-medium focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition shadow-sm" 
                                 placeholder="Analista..." 
                            />
                        </div>
@@ -137,7 +137,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                 type="text" 
                                 value={sigConfig.email} 
                                 onChange={e => setSigConfig({...sigConfig, email: e.target.value})} 
-                                className="w-full border border-gray-200 rounded-lg text-sm p-2.5 bg-white text-gray-900 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition shadow-sm" 
+                                className="w-full border border-gray-200 rounded-lg text-sm p-2.5 bg-white text-black font-medium focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition shadow-sm" 
                                 placeholder="seu.email@petacorp.com.br" 
                            />
                        </div>
@@ -147,7 +147,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                 type="text" 
                                 value={sigConfig.phone} 
                                 onChange={handlePhoneChange} 
-                                className="w-full border border-gray-200 rounded-lg text-sm p-2.5 bg-white text-gray-900 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition shadow-sm" 
+                                className="w-full border border-gray-200 rounded-lg text-sm p-2.5 bg-white text-black font-medium focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition shadow-sm" 
                                 placeholder="+55 (xx) xxxxx-xxxx" 
                            />
                        </div>
@@ -157,7 +157,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                 type="text" 
                                 value={sigConfig.address} 
                                 onChange={e => setSigConfig({...sigConfig, address: e.target.value})} 
-                                className="w-full border border-gray-200 rounded-lg text-sm p-2.5 bg-white text-gray-900 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition shadow-sm" 
+                                className="w-full border border-gray-200 rounded-lg text-sm p-2.5 bg-white text-black font-medium focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition shadow-sm" 
                            />
                        </div>
                        <div className="md:col-span-2">
@@ -166,7 +166,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                 type="text" 
                                 value={sigConfig.website} 
                                 onChange={e => setSigConfig({...sigConfig, website: e.target.value})} 
-                                className="w-full border border-gray-200 rounded-lg text-sm p-2.5 bg-white text-gray-900 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition shadow-sm" 
+                                className="w-full border border-gray-200 rounded-lg text-sm p-2.5 bg-white text-black font-medium focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition shadow-sm" 
                            />
                        </div>
                   </div>
@@ -189,7 +189,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                <select 
                                     value={sigConfig.fontSizeName} 
                                     onChange={e => setSigConfig({...sigConfig, fontSizeName: e.target.value})} 
-                                    className="text-xs border border-gray-200 rounded py-1 pl-2 pr-6 ml-1 bg-white text-gray-900 focus:ring-2 focus:ring-blue-500"
+                                    className="text-xs border border-gray-200 rounded py-1 pl-2 pr-6 ml-1 bg-white text-black font-bold focus:ring-2 focus:ring-blue-500"
                                 >
                                    <option value="10pt">10pt (Pequeno)</option>
                                    <option value="11pt">11pt (Médio)</option>
@@ -234,7 +234,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                             value={globalCC}
                             onChange={(e) => setGlobalCC(e.target.value)}
                             placeholder="email1@petacorp.com.br; email2@petacorp.com.br"
-                            className="w-full rounded-lg border-gray-200 shadow-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500 p-3 border text-sm h-24 bg-white text-gray-900 outline-none transition"
+                            className="w-full rounded-lg border-gray-200 shadow-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500 p-3 border text-sm h-24 bg-white text-black font-medium outline-none transition"
                         />
                     </div>
                   </div>
@@ -283,7 +283,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                          <select 
                                             value={scanConfig.intervalMinutes}
                                             onChange={(e) => setScanConfig({ ...scanConfig, intervalMinutes: Number(e.target.value) })}
-                                            className="text-xs text-blue-900 bg-white border-none rounded py-0.5 pl-2 pr-6 cursor-pointer focus:ring-0 h-6 shadow-sm"
+                                            className="text-xs text-black font-bold bg-white border border-gray-200 rounded py-0.5 pl-2 pr-6 cursor-pointer focus:ring-0 h-6 shadow-sm"
                                             onClick={(e) => e.stopPropagation()}
                                         >
                                             <option value={5}>A cada 5 min</option>
